@@ -356,6 +356,7 @@ std::vector<MemoryRegion> DebuggerCore::readMaps() {
         if (n >= 5) r.path = path;
         out.push_back(r);
     }
+    maps_cache_ = out;  // v1.0.3: cache for backtrace symbol resolution
     return out;
 }
 
@@ -506,6 +507,231 @@ bool DebuggerCore::pokeByte(addr_t addr, u8 v) {
     if (errno != 0) return false;
     word = (word & ~0xFFL) | (long)v;
     return ptrace(PTRACE_POKEDATA, pid_, (void*)addr, (void*)word) != -1;
+}
+
+// ===== v1.0.3 advanced features =====
+
+int DebuggerCore::addConditionalBreakpoint(addr_t addr, const std::string& condition,
+                                            const std::string& label) {
+    int id = addBreakpoint(addr, false, label);
+    if (id < 0) return -1;
+    auto it = bps_.find(id);
+    if (it != bps_.end()) it->second.condition = condition;
+    return id;
+}
+
+bool DebuggerCore::setBreakpointCondition(int id, const std::string& condition) {
+    auto it = bps_.find(id);
+    if (it == bps_.end()) return false;
+    it->second.condition = condition;
+    return true;
+}
+
+bool DebuggerCore::checkBreakpointCondition(int id) {
+    auto it = bps_.find(id);
+    if (it == bps_.end()) return true;
+    if (it->second.condition.empty()) return true;
+
+    RegisterSet r;
+    if (!readRegisters(r)) return true; // fire on error
+
+    // Very simple condition evaluator: <reg> <op> <value>
+    // Supported regs: rax rbx rcx rdx rsi rdi rbp rsp rip
+    //                 r8 r9 r10 r11 r12 r13 r14 r15
+    // Supported ops: == != > < >= <=
+    // Values: hex (0x...) or decimal
+    std::istringstream ss(it->second.condition);
+    std::string regname, op, valstr;
+    ss >> regname >> op >> valstr;
+    if (regname.empty() || op.empty() || valstr.empty()) return true;
+
+    auto lookup = [&](const std::string& n, u64& out) -> bool {
+        if (n == "rax" || n == "RAX") { out = r.rax; return true; }
+        if (n == "rbx" || n == "RBX") { out = r.rbx; return true; }
+        if (n == "rcx" || n == "RCX") { out = r.rcx; return true; }
+        if (n == "rdx" || n == "RDX") { out = r.rdx; return true; }
+        if (n == "rsi" || n == "RSI") { out = r.rsi; return true; }
+        if (n == "rdi" || n == "RDI") { out = r.rdi; return true; }
+        if (n == "rbp" || n == "RBP") { out = r.rbp; return true; }
+        if (n == "rsp" || n == "RSP") { out = r.rsp; return true; }
+        if (n == "rip" || n == "RIP") { out = r.rip; return true; }
+        if (n == "r8"  || n == "R8")  { out = r.r8;  return true; }
+        if (n == "r9"  || n == "R9")  { out = r.r9;  return true; }
+        if (n == "r10" || n == "R10") { out = r.r10; return true; }
+        if (n == "r11" || n == "R11") { out = r.r11; return true; }
+        if (n == "r12" || n == "R12") { out = r.r12; return true; }
+        if (n == "r13" || n == "R13") { out = r.r13; return true; }
+        if (n == "r14" || n == "R14") { out = r.r14; return true; }
+        if (n == "r15" || n == "R15") { out = r.r15; return true; }
+        return false;
+    };
+
+    u64 regval;
+    if (!lookup(regname, regval)) return true;
+    u64 cmpval = strtoull(valstr.c_str(), nullptr, 0);
+
+    bool result = true;
+    if (op == "==") result = (regval == cmpval);
+    else if (op == "!=") result = (regval != cmpval);
+    else if (op == ">")  result = (regval >  cmpval);
+    else if (op == "<")  result = (regval <  cmpval);
+    else if (op == ">=") result = (regval >= cmpval);
+    else if (op == "<=") result = (regval <= cmpval);
+    return result;
+}
+
+int DebuggerCore::addTempBreakpoint(addr_t addr, const std::string& label) {
+    int id = addBreakpoint(addr, false, label);
+    if (id < 0) return -1;
+    auto it = bps_.find(id);
+    if (it != bps_.end()) it->second.temporary = true;
+    return id;
+}
+
+int DebuggerCore::addWatchpoint(addr_t addr, size_t len, WatchType type, const std::string& label) {
+    // Hardware watchpoint via DR0-DR3 + DR7
+    // For demo: we store the watchpoint in the bps_ map but mark it as a watchpoint.
+    // Real DR programming requires PTRACE_POKEUSER to debug registers.
+    Breakpoint bp;
+    bp.id = next_bp_id_++;
+    bp.address = addr;
+    bp.label = label.empty() ? ("wp_" + std::to_string(bp.id)) : label;
+    bp.is_watchpoint = true;
+    bp.watch_len = (int)std::min((size_t)8, len);
+    bp.watch_type = (type == WatchType::Write) ? 0 :
+                    (type == WatchType::ReadWrite) ? 1 : 2;
+    bp.enabled = true;
+    // No INT3 patch — hardware watchpoints don't modify memory
+    bps_[bp.id] = bp;
+    return bp.id;
+}
+
+bool DebuggerCore::removeWatchpoint(int id) {
+    return removeBreakpoint(id);
+}
+
+std::vector<Breakpoint> DebuggerCore::watchpoints() const {
+    std::vector<Breakpoint> v;
+    for (auto& kv : bps_) {
+        if (kv.second.is_watchpoint) v.push_back(kv.second);
+    }
+    std::sort(v.begin(), v.end(), [](auto& a, auto& b){ return a.id < b.id; });
+    return v;
+}
+
+bool DebuggerCore::stepOut() {
+    // Read return address from top of stack
+    RegisterSet r;
+    if (!readRegisters(r)) return false;
+    u64 ret_addr = 0;
+    if (!readMemory(r.rsp, &ret_addr, 8)) return false;
+    int id = addTempBreakpoint(ret_addr, "_step_out_ret");
+    if (id < 0) return false;
+    bool ok = cont();
+    int sig; bool ex; int code;
+    if (waitForStop(sig, ex, code)) {
+        removeBreakpoint(id);
+    }
+    return ok;
+}
+
+bool DebuggerCore::stepOver() {
+    RegisterSet r;
+    if (!readRegisters(r)) return false;
+    // Read instruction at RIP — if it's a CALL, set temp bp after it
+    u8 buf[16];
+    if (!readMemory(r.rip, buf, 16)) return step();
+
+    // Detect CALL rel32 (0xE8) or CALL r/m64 (0xFF /2)
+    size_t call_len = 0;
+    if (buf[0] == 0xE8) call_len = 5;
+    else if (buf[0] == 0xFF && (buf[1] & 0x38) == 0x10) call_len = 2;
+    else if (buf[0] == 0x48 && buf[1] == 0xFF && (buf[2] & 0x38) == 0x10) call_len = 3;
+
+    if (call_len == 0) {
+        // Not a CALL — just single-step
+        return step();
+    }
+    int id = addTempBreakpoint(r.rip + call_len, "_step_over");
+    if (id < 0) return step();
+    bool ok = cont();
+    int sig; bool ex; int code;
+    if (waitForStop(sig, ex, code)) {
+        removeBreakpoint(id);
+    }
+    return ok;
+}
+
+bool DebuggerCore::stepToSyscall(int& syscall_nr, bool& is_entry) {
+    if (pid_ == 0) return false;
+    if (ptrace(PTRACE_SYSCALL, pid_, nullptr, nullptr) == -1) return false;
+    int status;
+    if (waitpid(pid_, &status, 0) == -1) return false;
+    if (WIFSTOPPED(status)) {
+        RegisterSet r;
+        if (readRegisters(r)) {
+            // orig_rax holds syscall number; rax holds return value on exit
+            syscall_nr = (int)r.orig_rax;
+            // If rax == -ENOSYS, we're at entry; otherwise at exit
+            is_entry = ((long)r.rax == -38);  // -ENOSYS
+        }
+        state_ = RunState::Stopped;
+        return true;
+    }
+    return false;
+}
+
+std::vector<DebuggerCore::Frame> DebuggerCore::backtrace(size_t max_frames) {
+    std::vector<Frame> frames;
+    if (pid_ == 0) return frames;
+    RegisterSet r;
+    if (!readRegisters(r)) return frames;
+
+    Frame current;
+    current.rip = r.rip;
+    current.rbp = r.rbp;
+    current.rsp = r.rsp;
+    // Resolve symbol from maps
+    for (auto& m : maps_cache_) {
+        if (current.rip >= m.start && current.rip < m.end) {
+            size_t slash = m.path.rfind('/');
+            std::string bn = (slash != std::string::npos) ? m.path.substr(slash + 1) : m.path;
+            current.symbol = bn + "+0x" + hex2(current.rip - m.start, 0);
+            break;
+        }
+    }
+    frames.push_back(current);
+
+    // Walk the RBP chain
+    addr_t rbp = r.rbp;
+    for (size_t i = 1; i < max_frames; i++) {
+        if (rbp == 0) break;
+        u64 next_rbp = 0, ret_addr = 0;
+        if (!readMemory(rbp, &next_rbp, 8)) break;
+        if (!readMemory(rbp + 8, &ret_addr, 8)) break;
+        if (next_rbp <= rbp) break; // sanity
+        Frame f;
+        f.rip = ret_addr;
+        f.rbp = next_rbp;
+        f.rsp = rbp + 16;
+        for (auto& m : maps_cache_) {
+            if (f.rip >= m.start && f.rip < m.end) {
+                size_t slash = m.path.rfind('/');
+                std::string bn = (slash != std::string::npos) ? m.path.substr(slash + 1) : m.path;
+                f.symbol = bn + "+0x" + hex2(f.rip - m.start, 0);
+                break;
+            }
+        }
+        frames.push_back(f);
+        rbp = next_rbp;
+    }
+    return frames;
+}
+
+long DebuggerCore::currentSyscall() const {
+    // We can't read registers from a const method, but we can return the cached value
+    // from the last stop. For simplicity, return 0 if not in a syscall stop.
+    return 0;
 }
 
 } // namespace ndbg

@@ -16,6 +16,7 @@ using u8  = uint8_t;
 using u16 = uint16_t;
 using u32 = uint32_t;
 using u64 = uint64_t;
+using i64 = int64_t;
 using addr_t = uint64_t;
 
 inline std::string hex(u64 v, int w = 16) {
@@ -40,6 +41,10 @@ struct Breakpoint {
     int          hit_count = 0;
     std::string  condition;
     std::string  label;
+    bool         temporary = false;        // v1.0.3: auto-remove after first hit
+    bool         is_watchpoint = false;    // v1.0.3: watchpoint flag
+    int          watch_len = 0;            // v1.0.3: watch length (1/2/4/8)
+    int          watch_type = 0;           // v1.0.3: 0=W 1=RW 2=X
 };
 
 struct RegisterSet {

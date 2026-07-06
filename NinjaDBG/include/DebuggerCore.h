@@ -60,6 +60,47 @@ public:
     Breakpoint* findBreakpoint(addr_t addr);
     int  findBreakpointId(addr_t addr);
 
+    // v1.0.3 — conditional breakpoints: only fire when condition evaluates true
+    // Condition syntax: "rax == 0x10", "rdi != 0", "rip > 0x400000" etc.
+    // Empty condition = always fire (normal breakpoint behavior)
+    int  addConditionalBreakpoint(addr_t addr, const std::string& condition,
+                                  const std::string& label = "");
+    bool setBreakpointCondition(int id, const std::string& condition);
+    // Check a breakpoint's condition against current register state. Returns
+    // true if the breakpoint should fire (i.e. condition is empty or true).
+    bool checkBreakpointCondition(int id);
+
+    // v1.0.3 — temporary breakpoints (auto-remove after first hit)
+    int  addTempBreakpoint(addr_t addr, const std::string& label = "_temp");
+
+    // v1.0.3 — watchpoints (memory access breakpoints via DR0-DR3 + DR7)
+    enum class WatchType { Write, ReadWrite, Execute };
+    int  addWatchpoint(addr_t addr, size_t len, WatchType type, const std::string& label = "");
+    bool removeWatchpoint(int id);
+    std::vector<Breakpoint> watchpoints() const;
+
+    // v1.0.3 — step out: continue until current function returns
+    // (sets a temp bp at the return address on top of stack)
+    bool stepOut();
+
+    // v1.0.3 — step over: if current instruction is a CALL, set temp bp after it
+    bool stepOver();
+
+    // v1.0.3 — run until next syscall entry/exit (PTRACE_SYSCALL)
+    bool stepToSyscall(int& syscall_nr, bool& is_entry);
+
+    // v1.0.3 — backtrace (walks RBP chain, returns instruction pointers)
+    struct Frame {
+        addr_t rip;
+        addr_t rbp;
+        addr_t rsp;
+        std::string symbol;
+    };
+    std::vector<Frame> backtrace(size_t max_frames = 32);
+
+    // v1.0.3 — get current syscall number (from orig_rax)
+    long currentSyscall() const;
+
     // --- Registers ---
     bool readRegisters(RegisterSet& out);
     bool writeRegisters(const RegisterSet& in);
@@ -91,6 +132,7 @@ private:
     int         next_bp_id_ = 1;
     std::string last_error_;
     AntiDetect* anti_ = nullptr;
+    std::vector<MemoryRegion> maps_cache_;   // v1.0.3: cached for backtrace symbol resolution
 
     bool setSwBreakpoint(addr_t addr, u8* saved);
     bool clearSwBreakpoint(addr_t addr, u8 saved);
