@@ -412,11 +412,27 @@ void MainWindow::paintToolbar(LayoutRect r) {
     // === Logo (left) ===
     if (logo_surf_) {
         int ls = 48;
+        // The logo PNG is 1024x1024. Draw it as a rounded thumbnail to fit the toolbar.
+        int lx = 8;
+        int ly = r.y + (r.h - ls) / 2;
         cairo_save(cr_);
-        cairo_scale(cr_, (double)ls/256, (double)ls/256);
-        cairo_set_source_surface(cr_, logo_surf_, 8.0*256/ls, (r.y + 8)*256/ls);
+        // Clip to rounded square
+        double rad = 8;
+        cairo_new_sub_path(cr_);
+        cairo_arc(cr_, lx + ls - rad, ly + rad,     rad, -M_PI/2, 0);
+        cairo_arc(cr_, lx + ls - rad, ly + ls - rad, rad, 0, M_PI/2);
+        cairo_arc(cr_, lx + rad,     ly + ls - rad, rad, M_PI/2, M_PI);
+        cairo_arc(cr_, lx + rad,     ly + rad,     rad, M_PI, 1.5*M_PI);
+        cairo_close_path(cr_);
+        cairo_clip(cr_);
+        // Scale and draw the logo
+        cairo_scale(cr_, (double)ls/1024, (double)ls/1024);
+        cairo_set_source_surface(cr_, logo_surf_, lx*1024.0/ls, ly*1024.0/ls);
         cairo_paint(cr_);
         cairo_restore(cr_);
+        // Subtle border around logo
+        LayoutRect lrect = { lx, ly, ls, ls };
+        strokeRounded(lrect, 8, col::Border, 1.0);
     }
     // Title + version (right of logo)
     drawText("NinjaDBG", 64, r.y + 14, col::Text, font::Title, 18);
@@ -501,31 +517,40 @@ void MainWindow::paintStatusBar(LayoutRect r) {
     cairo_line_to(cr_, r.x + r.w, r.y + 0.5);
     cairo_stroke(cr_);
 
-    // Status text
+    // Status text (left side, with status icon)
     u32 sc = col::Text_Dim;
     std::string icon = "\xE2\x97\x8F";
     if (dbg_.pid() == 0) { sc = col::Text_Muted; icon = "\xE2\x97\x8B"; }
     else if (dbg_.state() == DebuggerCore::RunState::Stopped) { sc = col::Warn; icon = "\xE2\x97\x89"; }
     else if (dbg_.state() == DebuggerCore::RunState::Running) { sc = col::OK; icon = "\xE2\x96\xB6"; }
-    drawText(icon + "  " + status_, r.x + 12, r.y + 6, sc, font::Sans, 12);
+    drawText(icon + "  " + status_, r.x + 12, r.y + 8, sc, font::Sans, 12);
 
-    // PID
+    // Right side: PID + State + Anti-detect (compact, fits the panel)
+    // Right-aligned, with "Closed Source - by Chapzoo" at the very right
+    std::string author = "Closed Source - Free - by Chapzoo";
+    int author_w = textWidth(author, font::Sans, 11);
+    int author_x = r.x + r.w - author_w - 12;
+    drawText(author, author_x, r.y + 9, col::Text_Muted, font::Sans, 11);
+
+    // Middle: PID/state info, right-aligned to the left of the author text
     if (dbg_.pid() != 0) {
-        std::ostringstream s;
-        s << "PID: " << dbg_.pid() << "  |  State: ";
+        std::string state_str;
         switch (dbg_.state()) {
-            case DebuggerCore::RunState::Idle:    s << "Idle"; break;
-            case DebuggerCore::RunState::Attached:s << "Attached"; break;
-            case DebuggerCore::RunState::Running: s << "Running"; break;
-            case DebuggerCore::RunState::Stopped: s << "Stopped"; break;
-            case DebuggerCore::RunState::Exited:  s << "Exited"; break;
+            case DebuggerCore::RunState::Idle:    state_str = "Idle"; break;
+            case DebuggerCore::RunState::Attached:state_str = "Attached"; break;
+            case DebuggerCore::RunState::Running: state_str = "Running"; break;
+            case DebuggerCore::RunState::Stopped: state_str = "Stopped"; break;
+            case DebuggerCore::RunState::Exited:  state_str = "Exited"; break;
         }
-        s << "  |  Anti-detect: ACTIVE";
-        drawText(s.str(), r.x + r.w - 460, r.y + 6, col::Accent, font::Mono, 11);
+        std::ostringstream s;
+        s << "PID " << dbg_.pid() << "  -  " << state_str << "  -  Anti-detect: ACTIVE";
+        std::string mid = s.str();
+        int mid_w = textWidth(mid, font::Mono, 11);
+        int mid_x = author_x - mid_w - 24;
+        if (mid_x > r.x + 400) {  // only draw if there's room
+            drawText(mid, mid_x, r.y + 9, col::Accent, font::Mono, 11);
+        }
     }
-
-    // Right corner: author
-    drawText("Closed Source - Free - by Chapzoo", r.x + r.w - 230, r.y + 6, col::Text_Muted, font::Sans, 11);
 }
 
 void MainWindow::drawDisassembly(LayoutRect r) {
@@ -623,9 +648,14 @@ void MainWindow::drawStack(LayoutRect r) {
     size_t rows = std::max((size_t)1, (size_t)(inner.h / 16));
     auto data = dbg_.readMemoryVec(reg_cache_.rsp, rows * 8);
     int y = inner.y;
+    // Column layout: address (18 chars * ~7 = 130px) + 8px gap + value (18 chars = 130px) + 12px gap + symbol (rest)
+    int addr_x = inner.x;
+    int val_x  = inner.x + 138;
+    int sym_x  = inner.x + 282;
+    int sym_max_w = inner.w - (sym_x - inner.x) - 4;
     for (size_t i = 0; i < rows; i++) {
         addr_t a = reg_cache_.rsp + i * 8;
-        drawMono(hex(a), inner.x, y, col::Info, 11);
+        drawMono(hex(a), addr_x, y, col::Info, 11);
         u64 v = 0;
         if (i * 8 + 8 <= data.size()) {
             memcpy(&v, data.data() + i * 8, 8);
@@ -634,12 +664,26 @@ void MainWindow::drawStack(LayoutRect r) {
         std::string sym;
         for (auto& m : maps_cache_) {
             if (v >= m.start && v < m.end) {
-                sym = " <" + m.path + "+0x" + hex2(v - m.start, 0) + ">";
+                // Show only basename of the path for compactness
+                std::string basename = m.path;
+                size_t slash = basename.rfind('/');
+                if (slash != std::string::npos) basename = basename.substr(slash + 1);
+                sym = "<" + basename + "+0x" + hex2(v - m.start, 0) + ">";
                 break;
             }
         }
-        drawMono(hex(v), inner.x + 130, y, col::Text, 11);
-        drawMono(sym, inner.x + 280, y, col::Purple, 11);
+        drawMono(hex(v), val_x, y, col::Text, 11);
+        if (!sym.empty()) {
+            // Truncate symbol if too long
+            int sw = textWidth(sym, font::Mono, 11);
+            if (sw > sym_max_w) {
+                while (sym.size() > 0 && textWidth(sym + "...", font::Mono, 11) > sym_max_w) {
+                    sym.pop_back();
+                }
+                sym += "...";
+            }
+            drawMono(sym, sym_x, y, col::Purple, 11);
+        }
         y += 16;
         if (y > inner.y + inner.h - 16) break;
     }
@@ -659,17 +703,22 @@ void MainWindow::drawRegisters(LayoutRect r) {
         &reg_cache_.r12, &reg_cache_.r13, &reg_cache_.r14, &reg_cache_.r15,
         &reg_cache_.rip, &reg_cache_.rflags
     };
-    int cols = 2;
     int rows_per_col = 9;
-    int x[2] = { inner.x, inner.x + inner.w / 2 };
+    // Two columns. Each register needs: name (3 chars * 7 = 21) + 8px gap + value (18 chars * 7 = 126) = ~155px
+    // For a 370px-wide panel minus 16px padding = 354px usable. Two columns = 177px each. Should fit.
+    int col_w = inner.w / 2;
+    int x[2] = { inner.x, inner.x + col_w };
     for (int i = 0; i < 18; i++) {
         int col = i / rows_per_col;
         int row = i % rows_per_col;
         int px = x[col];
         int py = inner.y + row * 16;
         drawMono(kRegNames[i], px, py, col::Accent2, 11);
-        drawMono(hex(*vals[i]), px + 36, py,
-                 (i == 16) ? col::Warn : col::Text, 11);  // RIP highlighted
+        // Highlight RIP and RSP differently
+        u32 val_color = col::Text;
+        if (i == 16) val_color = col::Warn;       // RIP
+        else if (i == 7) val_color = col::Info;   // RSP
+        drawMono(hex(*vals[i]), px + 36, py, val_color, 11);
     }
 }
 
@@ -679,26 +728,44 @@ void MainWindow::drawAntiDetect(LayoutRect r) {
 
     auto techs = AntiDetect::allTechniques();
     int y = inner.y;
+    int row_h = 38;  // each technique takes 38px (name + description + gap)
+    int max_desc_w = inner.w - 90;  // available width for descriptions (after toggle + name)
+
     for (size_t i = 0; i < techs.size(); i++) {
         bool on = anti_.isEnabled(techs[i]);
-        // Toggle switch
-        LayoutRect tg = { inner.x, y, 28, 16 };
-        fillRounded(tg, 8, on ? col::Accent_Dim : col::BG_Hover);
-        // Knob
-        LayoutRect knob = { on ? tg.x + 14 : tg.x + 2, tg.y + 2, 12, 12 };
-        fillRounded(knob, 6, on ? col::Accent : col::Text_Muted);
 
-        drawText(AntiDetect::name(techs[i]), inner.x + 36, y, on ? col::Text : col::Text_Muted, font::Sans, 11);
-        // Status badge
-        drawText(on ? "ON" : "OFF", inner.x + inner.w - 36, y,
-                 on ? col::OK : col::Text_Muted, font::Mono, 10);
-        y += 22;
-        // Description (smaller, dimmer) - only show 1 line
+        // Toggle switch (left)
+        LayoutRect tg = { inner.x, y + 2, 32, 18 };
+        fillRounded(tg, 9, on ? col::Accent_Dim : col::BG_Hover);
+        // Knob
+        LayoutRect knob = { on ? tg.x + 16 : tg.x + 2, tg.y + 2, 14, 14 };
+        fillRounded(knob, 7, on ? col::Accent : col::Text_Muted);
+
+        // Technique name (next to toggle, with status badge)
+        std::string name = AntiDetect::name(techs[i]);
+        drawText(name, inner.x + 42, y + 2, on ? col::Text : col::Text_Muted, font::Sans, 11);
+
+        // Status badge (right-aligned, ON/OFF)
+        std::string st = on ? "ON" : "OFF";
+        int st_w = textWidth(st, font::Mono, 9);
+        drawText(st, inner.x + inner.w - st_w - 4, y + 4,
+                 on ? col::OK : col::Text_Muted, font::Mono, 9);
+
+        // Description (smaller, with proper ellipsis truncation to fit panel)
         std::string desc = AntiDetect::description(techs[i]);
-        if (desc.size() > 60) desc = desc.substr(0, 57) + "...";
-        drawText(desc, inner.x + 36, y, col::Text_Muted, font::Sans, 9);
-        y += 16;
-        if (y > inner.y + inner.h - 16) break;
+        // Truncate with ellipsis if too wide
+        int desc_w = textWidth(desc, font::Sans, 9);
+        if (desc_w > max_desc_w) {
+            // Trim character by character until it fits with "..."
+            while (desc.size() > 0 && textWidth(desc + "...", font::Sans, 9) > max_desc_w) {
+                desc.pop_back();
+            }
+            desc += "...";
+        }
+        drawText(desc, inner.x + 42, y + 18, col::Text_Muted, font::Sans, 9);
+
+        y += row_h;
+        if (y + row_h > inner.y + inner.h) break;
     }
 }
 
@@ -709,12 +776,27 @@ void MainWindow::drawThreads(LayoutRect r) {
         drawText("No threads.", inner.x, inner.y, col::Text_Muted, font::Sans, 12);
         return;
     }
-    drawMono("TID      STATE  NAME", inner.x, inner.y, col::Text_Dim, 10);
-    int y = inner.y + 16;
+    // Header row with fixed columns
+    drawMono("TID         STATE  NAME", inner.x, inner.y, col::Text_Dim, 10);
+    int y = inner.y + 18;
+    int name_max_w = inner.w - 130;  // space remaining after TID + STATE columns
     for (auto& t : threads_cache_) {
-        std::ostringstream s;
-        s << std::left << std::setw(8) << t.tid << " " << std::setw(6) << t.state << "  " << t.name;
-        drawMono(s.str(), inner.x, y, col::Text, 11);
+        // TID column (left)
+        std::ostringstream tid_s;
+        tid_s << std::left << std::setw(10) << t.tid;
+        drawMono(tid_s.str(), inner.x, y, col::Info, 11);
+        // STATE column
+        drawMono(t.state, inner.x + 90, y, col::Warn, 11);
+        // NAME column (truncated if too long)
+        std::string nm = t.name;
+        int nm_w = textWidth(nm, font::Mono, 11);
+        if (nm_w > name_max_w) {
+            while (nm.size() > 0 && textWidth(nm + "...", font::Mono, 11) > name_max_w) {
+                nm.pop_back();
+            }
+            nm += "...";
+        }
+        drawMono(nm, inner.x + 120, y, col::Text, 11);
         y += 16;
         if (y > inner.y + inner.h - 16) break;
     }
@@ -724,20 +806,48 @@ void MainWindow::drawBreakpoints(LayoutRect r) {
     drawPanel(r, "BREAKPOINTS  (click to toggle)");
     LayoutRect inner = { r.x + 8, r.y + 30, r.w - 16, r.h - 38 };
     if (bps_cache_.empty()) {
-        drawText("No breakpoints set. Set one by right-clicking in disassembly (not implemented in this demo) "
-                 "or use the console command 'bp <addr>'.",
-                 inner.x, inner.y, col::Text_Muted, font::Sans, 11);
+        // Word-wrap the hint text so it never overflows the panel
+        std::string hint = "No breakpoints set. Set one by clicking in the disassembly panel "
+                           "(planned for v1.1) or via the console command 'bp <addr>'.";
+        // Simple word-wrap: split on spaces, draw line by line
+        int max_w = inner.w - 8;
+        std::istringstream iss(hint);
+        std::string word, line;
+        int y = inner.y;
+        while (iss >> word) {
+            std::string test = line.empty() ? word : (line + " " + word);
+            if (textWidth(test, font::Sans, 11) > max_w) {
+                drawText(line, inner.x, y, col::Text_Muted, font::Sans, 11);
+                y += 16;
+                line = word;
+            } else {
+                line = test;
+            }
+        }
+        if (!line.empty()) {
+            drawText(line, inner.x, y, col::Text_Muted, font::Sans, 11);
+        }
         return;
     }
     drawMono("ID  ADDR              TYPE    HITS  LABEL", inner.x, inner.y, col::Text_Dim, 11);
     int y = inner.y + 16;
+    int label_max_w = inner.w - 280;  // remaining width for label column
     for (auto& b : bps_cache_) {
         std::ostringstream s;
         s << std::left << std::setw(4) << b.id << " "
           << hex(b.address) << "  "
           << (b.hardware ? "HW    " : "SW    ") << " "
-          << std::setw(5) << b.hit_count << "  "
-          << b.label;
+          << std::setw(5) << b.hit_count << "  ";
+        // Truncate label if too long
+        std::string lbl = b.label;
+        int lbl_w = textWidth(lbl, font::Mono, 11);
+        if (lbl_w > label_max_w) {
+            while (lbl.size() > 0 && textWidth(lbl + "...", font::Mono, 11) > label_max_w) {
+                lbl.pop_back();
+            }
+            lbl += "...";
+        }
+        s << lbl;
         u32 c = b.enabled ? col::Text : col::Text_Muted;
         drawMono(s.str(), inner.x, y, c, 11);
         if (b.enabled) {
@@ -772,15 +882,27 @@ void MainWindow::paintAboutModal() {
     fillRounded(top_bar, 2, col::Accent);
 
     // === Logo (centered, large) ===
-    int logo_sz = 180;
+    int logo_sz = 200;
     if (logo_surf_) {
         int lx = r.x + (r.w - logo_sz) / 2;
-        int ly = r.y + 30;
+        int ly = r.y + 24;
         cairo_save(cr_);
-        cairo_scale(cr_, (double)logo_sz/256, (double)logo_sz/256);
-        cairo_set_source_surface(cr_, logo_surf_, lx*256.0/logo_sz, ly*256.0/logo_sz);
+        // Clip to rounded square (logo is 1024x1024)
+        double rad = 14;
+        cairo_new_sub_path(cr_);
+        cairo_arc(cr_, lx + logo_sz - rad, ly + rad,          rad, -M_PI/2, 0);
+        cairo_arc(cr_, lx + logo_sz - rad, ly + logo_sz - rad, rad, 0, M_PI/2);
+        cairo_arc(cr_, lx + rad,          ly + logo_sz - rad, rad, M_PI/2, M_PI);
+        cairo_arc(cr_, lx + rad,          ly + rad,          rad, M_PI, 1.5*M_PI);
+        cairo_close_path(cr_);
+        cairo_clip(cr_);
+        cairo_scale(cr_, (double)logo_sz/1024, (double)logo_sz/1024);
+        cairo_set_source_surface(cr_, logo_surf_, lx*1024.0/logo_sz, ly*1024.0/logo_sz);
         cairo_paint(cr_);
         cairo_restore(cr_);
+        // Subtle border
+        LayoutRect lrect = { lx, ly, logo_sz, logo_sz };
+        strokeRounded(lrect, 14, col::Border, 1.0);
     }
 
     // === Title (centered, large) ===
