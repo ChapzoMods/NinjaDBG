@@ -1,5 +1,5 @@
-// NinjaDBG v1.0.5 - WelcomeScreen implementation
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - WelcomeScreen implementation
+// Open Source (MIT License) - by Chapzoo
 #include "WelcomeScreen.h"
 #include <fstream>
 #include <sstream>
@@ -30,7 +30,7 @@ bool WelcomeScreen::isEulaAccepted() {
     if (!f.good()) return false;
     std::string line;
     std::getline(f, line);
-    return line == "1.0.5";
+    return line == "1.1.0";
 }
 
 bool WelcomeScreen::acceptEula() {
@@ -39,28 +39,35 @@ bool WelcomeScreen::acceptEula() {
     std::system(cmd.c_str());
     std::ofstream f(eulaPath());
     if (!f) return false;
-    f << "1.0.5\n";
+    f << "1.1.0\n";
     f.close();
     return true;
 }
 
 std::string WelcomeScreen::welcomeMessage() {
     return R"WELCOME(
-Welcome to NinjaDBG v1.0.5 — Stealth Debugger
+Welcome to NinjaDBG v1.1.0 — Stealth Debugger
 
-NinjaDBG is a closed-source, free, native debugger for Linux x86-64 with
-experimental support for Windows (PE) and macOS (Mach-O) binaries.
+NinjaDBG is an OPEN SOURCE (MIT License) native debugger for Linux x86-64
+with experimental support for Windows (PE) and macOS (Mach-O) binaries.
 
 This release adds:
-  - Headless CLI mode (for SSH-only environments and scripting)
+  - Bug fixes: info b, patch undo, --no-eula-check, script run python, decomp angr
+  - Pretty Printers per language (C, C++, Rust, Go, Python)
+  - Switched from Closed Source to Open Source (MIT License)
+
+Full feature list:
+  - Headless CLI mode (recommended for production)
   - Kernel-level stealth techniques (loadable kernel module)
   - Binary patching (NOP, JMP, CALL→NOP, ASCII replace, custom bytes)
   - Conditional + temporary breakpoints, watchpoints, step-over/step-out
   - Cross-platform debugging via Wine + QEMU adapters
-  - Welcome screen + EULA
-  - [v1.0.5] Full x86-64 disassembler in CLI (disas command)
-  - [v1.0.5] Interactive TUI memory editor (edit command)
-  - [v1.0.5] Lua + Python scripting (script run command)
+  - Full standalone x86-64 disassembler
+  - Interactive TUI memory editor (hex+ASCII, no ncurses)
+  - Lua + Python scripting via JSON-RPC subprocess bridge
+  - Native C decompilation via RetDec + angr backends
+  - Pretty printers: C strings, std::string, Rust String, Go string, Python str, structs
+  - Welcome screen + MIT license
 
 IMPORTANT: The graphical interface is EXPERIMENTAL and still under active
 development. For production use, prefer the headless CLI (run `ninjadb --cli`).
@@ -70,47 +77,38 @@ development. For production use, prefer the headless CLI (run `ninjadb --cli`).
 std::string WelcomeScreen::eulaText() {
     return R"EULA(
 ==========================================================================
-   NinjaDBG v1.0.5 — END USER LICENSE AGREEMENT (EULA)
+   NinjaDBG v1.1.0 — MIT License (Open Source)
 ==========================================================================
 
-Copyright (c) 2026 Chapzoo (one person). All rights reserved.
+MIT License
 
-BY DOWNLOADING, INSTALLING, OR USING NINJADBG, YOU AGREE TO BE BOUND BY
-THE TERMS OF THIS EULA. IF YOU DO NOT AGREE, DO NOT USE THE SOFTWARE.
+Copyright (c) 2026 Chapzoo (ChapzoMods)
 
-1. DEFINITIONS
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-   "Software" means NinjaDBG v1.0.5, including the debugger binary
-   (ninjadb), the headless CLI, the graphical interface (experimental),
-   the libninjastealth.so preload payload, the optional ninja_stealth.ko
-   kernel module, and all accompanying documentation.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-   "Author" means Chapzoo, the sole creator and rights holder.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
-   "Target" means any binary or process you debug with the Software.
+==========================================================================
+   Additional notes (not part of the MIT license)
+==========================================================================
 
-2. LICENSE GRANT
+1. ANTI-DEBUG / STEALTH FEATURES
 
-   The Author grants you a non-exclusive, non-transferable, revocable
-   license to:
-     (a) install and run the Software on machines you own or control;
-     (b) use the Software for personal, academic, or commercial purposes;
-     (c) redistribute the Software in its original unmodified archive,
-         including this EULA.
-
-3. CLOSED SOURCE
-
-   The Software is distributed in binary form only. The source code is
-   private and is NOT distributed. You may NOT:
-     (a) reverse-engineer, decompile, or disassemble the binaries;
-     (b) modify, patch, or create derivative works of the binaries;
-     (c) redistribute modified versions;
-     (d) remove or alter any copyright notice or EULA reference;
-     (e) represent the Software, in whole or in part, as your own work.
-
-4. ANTI-DEBUG / STEALTH FEATURES
-
-   The Software implements techniques to hide its presence from Target
+   NinjaDBG implements techniques to hide its presence from Target
    processes. These techniques are intended for:
      - legitimate reverse engineering and security research;
      - debugging software whose anti-debug routines interfere with normal
@@ -124,7 +122,7 @@ THE TERMS OF THIS EULA. IF YOU DO NOT AGREE, DO NOT USE THE SOFTWARE.
      - evade anti-cheat systems in online games;
      - bypass security controls on systems you do not own or control.
 
-5. KERNEL MODULE (OPTIONAL)
+2. KERNEL MODULE (OPTIONAL)
 
    The Software can optionally load a kernel module (ninja_stealth.ko)
    for kernel-level stealth. Loading unsigned kernel modules has security
@@ -134,53 +132,28 @@ THE TERMS OF THIS EULA. IF YOU DO NOT AGREE, DO NOT USE THE SOFTWARE.
      (c) is NOT liable for system instability, data loss, or security
          incidents resulting from loading the module.
 
-6. NO WARRANTY
+3. EXPERIMENTAL FEATURES
+
+   The graphical interface is EXPERIMENTAL and still under development.
+   Bugs, layout issues, and missing features are expected. For production
+   use, prefer the headless CLI.
+
+4. NO WARRANTY
 
    THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS
-   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
-   NONINFRINGEMENT. THE AUTHOR DOES NOT WARRANT THAT THE SOFTWARE WILL
-   FUNCTION CORRECTLY, WILL MEET YOUR REQUIREMENTS, OR WILL BE FREE FROM
-   DEFECTS.
+   OR IMPLIED. THE AUTHOR DOES NOT WARRANT THAT THE SOFTWARE WILL FUNCTION
+   CORRECTLY, WILL MEET YOUR REQUIREMENTS, OR WILL BE FREE FROM DEFECTS.
 
-7. LIMITATION OF LIABILITY
+5. LIMITATION OF LIABILITY
 
    IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
    SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING BUT NOT LIMITED
    TO LOSS OF PROFITS, DATA, OR USE, EVEN IF THE AUTHOR HAS BEEN ADVISED
-   OF THE POSSIBILITY OF SUCH DAMAGES. YOUR SOLE REMEDY FOR DISSATISFACTION
-   WITH THE SOFTWARE IS TO STOP USING IT.
-
-8. EXPERIMENTAL FEATURES
-
-   The graphical interface is EXPERIMENTAL and still under development.
-   Bugs, layout issues, and missing features are expected. For production
-   use, prefer the headless CLI. The Author does not guarantee any
-   specific roadmap or release schedule for GUI improvements.
-
-9. TERMINATION
-
-   This license terminates automatically if you violate any term. Upon
-   termination you must destroy all copies of the Software.
-
-10. GOVERNING LAW
-
-    This EULA is governed by the laws of the Author's jurisdiction.
-    Disputes shall be resolved in the courts of that jurisdiction.
-
-11. CHANGES
-
-    The Author reserves the right to update this EULA in future releases.
-    Continued use after an update constitutes acceptance of the new terms.
-
-12. ENTIRE AGREEMENT
-
-    This EULA constitutes the entire agreement between you and the Author
-    regarding the Software, superseding any prior agreements.
+   OF THE POSSIBILITY OF SUCH DAMAGES.
 
 ==========================================================================
-   If you do not agree, do not use NinjaDBG. Press ESC or close the
-   application now.
+   By using NinjaDBG you accept the MIT License terms above.
+   Press 'y' to accept, or any other key to decline.
 ==========================================================================
 )EULA";
 }

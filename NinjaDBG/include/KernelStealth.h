@@ -1,5 +1,5 @@
-// NinjaDBG v1.0.5 - Kernel-Level Stealth Techniques
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - Kernel-Level Stealth Techniques
+// Open Source (MIT) - by Chapzoo
 //
 // Userland anti-detect can mask /proc/self/status, rewrite argv[0], and use
 // process_vm_readv to avoid ptrace events. But it cannot hide from a target

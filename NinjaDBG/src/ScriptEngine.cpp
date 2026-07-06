@@ -1,5 +1,5 @@
-// NinjaDBG v1.0.5 - ScriptEngine implementation
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - ScriptEngine implementation
+// Open Source (MIT) - by Chapzoo
 #include "ScriptEngine.h"
 #include <iostream>
 #include <fstream>
@@ -240,7 +240,17 @@ class _Ndbg:
             except: return []
         return result
 
-ndbg = _Ndbg()
+# Create the ndbg instance and register it as a module so that
+# user scripts can do `import ndbg` OR just use `ndbg` directly.
+import sys, types
+_inst = _Ndbg()
+_mod = types.ModuleType('ndbg')
+for _attr in dir(_inst):
+    if not _attr.startswith('_'):
+        setattr(_mod, _attr, getattr(_inst, _attr))
+sys.modules['ndbg'] = _mod
+ndbg = _inst
+del _inst, _mod, _attr, sys, types
 )PY";
 }
 

@@ -1,5 +1,5 @@
 // NinjaDBG v1.0.2 - MainWindow implementation (part 2: painting & panels)
-// Closed Source - Free - by Chapzoo
+// Open Source (MIT) - by Chapzoo
 #include "MainWindow.h"
 #include "UITheme.h"
 #include <sstream>
@@ -135,7 +135,10 @@ std::vector<MainWindow::Instr> MainWindow::disassemble(addr_t start, size_t n) {
         // Skip prefixes
         size_t pfx = i;
         bool has_66 = false, has_67 = false, rex_w = false;
-        while (pfx < code.size()) {
+        // Cap prefix count to avoid overflowing ins.bytes[15].
+        // x86 allows at most 4 legacy prefixes + 1 REX, so 14 is a safe upper bound.
+        size_t max_pfx = i + 14;
+        while (pfx < code.size() && pfx < max_pfx) {
             u8 b = code[pfx];
             if (b == 0x66) { has_66 = true; pfx++; continue; }
             if (b == 0x67) { has_67 = true; pfx++; continue; }
@@ -526,8 +529,8 @@ void MainWindow::paintStatusBar(LayoutRect r) {
     drawText(icon + "  " + status_, r.x + 12, r.y + 8, sc, font::Sans, 12);
 
     // Right side: PID + State + Anti-detect (compact, fits the panel)
-    // Right-aligned, with "Closed Source - by Chapzoo" at the very right
-    std::string author = "Closed Source - Free - by Chapzoo";
+    // Right-aligned, with "Open Source (MIT) - by Chapzoo" at the very right
+    std::string author = "Open Source (MIT) - by Chapzoo";
     int author_w = textWidth(author, font::Sans, 11);
     int author_x = r.x + r.w - author_w - 12;
     drawText(author, author_x, r.y + 9, col::Text_Muted, font::Sans, 11);
@@ -919,7 +922,7 @@ void MainWindow::paintAboutModal() {
 
     // License / Author
     int ly = vy + 28;
-    std::string lic = "Closed Source  -  Free for all uses";
+    std::string lic = "Open Source (MIT)  -  Free for all uses";
     int lw = textWidth(lic, font::Sans, 12);
     drawText(lic, r.x + (r.w - lw) / 2, ly, col::Text_Dim, font::Sans, 12);
     ly += 22;

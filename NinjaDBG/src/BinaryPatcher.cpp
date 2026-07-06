@@ -1,5 +1,5 @@
-// NinjaDBG v1.0.5 - BinaryPatcher implementation
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - BinaryPatcher implementation
+// Open Source (MIT) - by Chapzoo
 #include "BinaryPatcher.h"
 #include <fstream>
 #include <sstream>
@@ -27,13 +27,17 @@ bool BinaryPatcher::load(const std::string& path) {
         return false;
     }
     f.seekg(0, std::ios::end);
-    size_t sz = f.tellg();
+    std::streamoff sz = f.tellg();
+    if (sz < 0) {
+        last_error_ = "tellg failed on: " + path;
+        return false;
+    }
     f.seekg(0, std::ios::beg);
-    original_.resize(sz);
-    working_.resize(sz);
+    original_.resize((size_t)sz);
+    working_.resize((size_t)sz);
     f.read((char*)original_.data(), sz);
     f.close();
-    std::memcpy(working_.data(), original_.data(), sz);
+    std::memcpy(working_.data(), original_.data(), (size_t)sz);
     loaded_path_ = path;
     patches_.clear();
 
@@ -150,6 +154,8 @@ bool BinaryPatcher::parsePE() {
     if (std::memcmp(original_.data() + lfanew, "PE\0\0", 4) != 0) return true;
     // COFF header at lfanew+4, optional header at lfanew+24
     // AddressOfEntryPoint is at optional header offset 16 (PE32) or 16 (PE32+)
+    // Total offset from start of file: lfanew + 24 + 16 = lfanew + 40, read 4 bytes
+    if (lfanew + 44 > original_.size()) return true;  // bounds check
     u32 entry_rva;
     std::memcpy(&entry_rva, original_.data() + lfanew + 24 + 16, 4);
     entry_ = entry_rva;  // PE uses RVA, not absolute
@@ -243,16 +249,28 @@ int BinaryPatcher::applyPatch(u64 file_offset, PatchKind kind, size_t length,
             break;
         case PatchKind::JmpAlways: {
             // Replace Jcc rel8/rel32 with JMP rel8/rel32
-            // For Jcc rel8 (2 bytes): keep length, replace 1st byte with 0xEB
-            // For Jcc rel32 (6 bytes): keep length, replace 1st 2 bytes with 0xE9 + nop
+            // For Jcc rel8 (2 bytes: 7x xx): replace 1st byte with 0xEB (JMP rel8)
+            // For Jcc rel32 (6 bytes: 0F 8x xx xx xx xx): replace with
+            //   JMP rel32 (5 bytes: E9 xx xx xx xx) + 1 NOP
+            // IMPORTANT: Jcc rel32 is RIP-relative to RIP+6, JMP rel32 is
+            // RIP-relative to RIP+5. To land on the same target, decrement
+            // the 32-bit displacement by 1 (little-endian).
             p.patched_bytes = p.original_bytes;
-            if (length == 2) p.patched_bytes[0] = 0xEB;
-            else if (length == 6) {
+            if (length == 2) {
+                p.patched_bytes[0] = 0xEB;
+            } else if (length == 6) {
                 p.patched_bytes[0] = 0xE9;
-                p.patched_bytes[1] = p.original_bytes[2];  // keep rel32
-                p.patched_bytes[2] = p.original_bytes[3];
-                p.patched_bytes[3] = p.original_bytes[4];
-                p.patched_bytes[4] = p.original_bytes[5];
+                // Decrement the rel32 displacement by 1 to account for
+                // the 1-byte shorter instruction (5 vs 6 bytes).
+                u32 disp = (u32)p.original_bytes[2]
+                         | ((u32)p.original_bytes[3] << 8)
+                         | ((u32)p.original_bytes[4] << 16)
+                         | ((u32)p.original_bytes[5] << 24);
+                disp -= 1;
+                p.patched_bytes[1] = (u8)(disp & 0xFF);
+                p.patched_bytes[2] = (u8)((disp >> 8) & 0xFF);
+                p.patched_bytes[3] = (u8)((disp >> 16) & 0xFF);
+                p.patched_bytes[4] = (u8)((disp >> 24) & 0xFF);
                 p.patched_bytes[5] = 0x90;  // NOP padding
             }
             break;

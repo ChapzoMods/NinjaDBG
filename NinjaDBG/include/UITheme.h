@@ -1,5 +1,5 @@
 // NinjaDBG v1.0.2 - UI Theme & Layout Constants
-// Closed Source - Free - by Chapzoo
+// Open Source (MIT) - by Chapzoo
 #pragma once
 
 #include <string>

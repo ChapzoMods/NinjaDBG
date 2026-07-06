@@ -1,5 +1,5 @@
-// NinjaDBG v1.0.5 - Decompiler Module (RetDec / angr backend)
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - Decompiler Module (RetDec / angr backend)
+// Open Source (MIT) - by Chapzoo
 //
 // Provides full C decompilation of native binaries by wrapping the
 // Avast RetDec decompiler as a native library. We do NOT reimplement

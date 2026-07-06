@@ -1,0 +1,682 @@
+     1→// NinjaDBG v1.0.5 - ScriptEngine implementation
+     2→// Closed Source - Free - by Chapzoo
+     3→#include "ScriptEngine.h"
+     4→#include <iostream>
+     5→#include <fstream>
+     6→#include <sstream>
+     7→#include <cstring>
+     8→#include <cstdlib>
+     9→#include <unistd.h>
+    10→#include <cstdio>
+    11→#include <signal.h>
+    12→#include <sys/wait.h>
+    13→#include <chrono>
+    14→#include <thread>
+    15→
+    16→namespace ndbg {
+    17→
+    18→ScriptEngine::ScriptEngine(DebuggerCore& dbg) : dbg_(dbg) {}
+    19→ScriptEngine::~ScriptEngine() {}
+    20→
+    21→bool ScriptEngine::binaryInPath(const std::string& name) {
+    22→    std::string cmd = "which " + name + " > /dev/null 2>&1";
+    23→    return std::system(cmd.c_str()) == 0;
+    24→}
+    25→
+    26→bool ScriptEngine::isAvailable(Lang lang) const {
+    27→    switch (lang) {
+    28→        case Lang::Lua:    return binaryInPath("lua") || binaryInPath("lua5.4") ||
+    29→                                  binaryInPath("lua5.3") || binaryInPath("lua5.1");
+    30→        case Lang::Python: return binaryInPath("python3") || binaryInPath("python");
+    31→    }
+    32→    return false;
+    33→}
+    34→
+    35→std::string ScriptEngine::installHint(Lang lang) const {
+    36→    switch (lang) {
+    37→        case Lang::Lua:    return "Install Lua: sudo apt-get install lua5.4";
+    38→        case Lang::Python: return "Install Python: sudo apt-get install python3";
+    39→    }
+    40→    return "";
+    41→}
+    42→
+    43→std::vector<ScriptEngine::Lang> ScriptEngine::availableLanguages() const {
+    44→    std::vector<Lang> result;
+    45→    if (isAvailable(Lang::Lua))    result.push_back(Lang::Lua);
+    46→    if (isAvailable(Lang::Python)) result.push_back(Lang::Python);
+    47→    return result;
+    48→}
+    49→
+    50→std::string ScriptEngine::apiDocs() {
+    51→    return R"DOCS(
+    52→NinjaDBG Scripting API (Lua + Python)
+    53→======================================
+    54→
+    55→Both Lua and Python scripts have access to the `ndbg` module with these
+    56→functions. All addresses are integers (Lua 64-bit, Python int). All byte
+    57→lists are 0-255 ints.
+    58→
+    59→Process control:
+    60→  ndbg.attach(pid)                    Attach to a running process
+    61→  ndbg.launch(path, [args])           Launch a new process under the debugger
+    62→  ndbg.detach()                       Detach from target
+    63→  ndbg.kill()                         Kill target
+    64→  ndbg.continue()                     Continue execution
+    65→  ndbg.step()                         Single-step one instruction
+    66→  ndbg.wait_stop()                    Wait for target to stop (returns {signal=, exited=, exit_code=})
+    67→
+    68→Breakpoints:
+    69→  ndbg.breakpoint(addr)               Set a software breakpoint
+    70→  ndbg.tbreak(addr)                   Set a temporary breakpoint (auto-removed on first hit)
+    71→  ndbg.breakpoint_cond(addr, cond)    Set a conditional breakpoint (e.g. "rax == 0")
+    72→  ndbg.delete(id)                     Delete a breakpoint
+    73→
+    74→Memory:
+    75→  ndbg.read_bytes(addr, n)            Read n bytes; returns a list
+    76→  ndbg.write_bytes(addr, bytes)       Write bytes (list of 0-255 ints)
+    77→  ndbg.read_u8/u16/u32/u64(addr)      Read unsigned integer
+    78→  ndbg.write_u8/u16/u32/u64(addr, v)  Write unsigned integer
+    79→
+    80→Registers:
+    81→  ndbg.read_register(name)            Read register ("rax", "rip", etc.)
+    82→  ndbg.write_register(name, value)    Write register
+    83→
+    84→Disassembly:
+    85→  ndbg.disassemble(addr, n)           Disassemble n instructions; returns list of strings
+    86→
+    87→Other:
+    88→  ndbg.backtrace([max_frames])        Walk RBP chain; returns list of {rip=, symbol=}
+    89→  ndbg.log(msg)                       Print a log message
+    90→  ndbg.sleep(ms)                      Sleep for ms milliseconds
+    91→  ndbg.info_registers()               Returns dict of {name -> value}
+    92→  ndbg.info_breakpoints()             Returns list of {id=, addr=, hits=, cond=}
+    93→
+    94→Example (Lua):
+    95→  local pid = tonumber(arg[1])
+    96→  ndbg.attach(pid)
+    97→  ndbg.breakpoint(0x401000)
+    98→  ndbg.continue()
+    99→  ndbg.wait_stop()
+   100→  local rip = ndbg.read_register("rip")
+   101→  ndbg.log("stopped at " .. string.format("0x%x", rip))
+   102→  local bytes = ndbg.read_bytes(rip, 16)
+   103→  for i, b in ipairs(bytes) do
+   104→      ndbg.log(string.format("  [%d] = 0x%02x", i, b))
+   105→  end
+   106→  ndbg.detach()
+   107→
+   108→Example (Python):
+   109→  import sys
+   110→  pid = int(sys.argv[1])
+   111→  ndbg.attach(pid)
+   112→  ndbg.breakpoint(0x401000)
+   113→  ndbg.continue()
+   114→  ndbg.wait_stop()
+   115→  rip = ndbg.read_register("rip")
+   116→  ndbg.log(f"stopped at 0x{rip:x}")
+   117→  bytes_ = ndbg.read_bytes(rip, 16)
+   118→  for i, b in enumerate(bytes_):
+   119→      ndbg.log(f"  [{i}] = 0x{b:02x}")
+   120→  ndbg.detach()
+   121→)DOCS";
+   122→}
+   123→
+   124→std::string ScriptEngine::luaBootstrap() const {
+   125→    return R"LUA(
+   126→-- NinjaDBG Lua bootstrap — exposes the `ndbg` module via JSON-RPC over stdin/stdout
+   127→local ndbg = {}
+   128→
+   129→local function rpc(cmd, args)
+   130→    local req = '{"cmd": "' .. cmd .. '"'
+   131→    if args and #args > 0 then
+   132→        req = req .. ', "args": ['
+   133→        for i, a in ipairs(args) do
+   134→            if i > 1 then req = req .. ', ' end
+   135→            if type(a) == "string" then
+   136→                req = req .. '"' .. a:gsub('"', '\\"') .. '"'
+   137→            elseif type(a) == "number" then
+   138→                req = req .. tostring(a)
+   139→            elseif type(a) == "boolean" then
+   140→                req = req .. (a and "true" or "false")
+   141→            end
+   142→        end
+   143→        req = req .. ']'
+   144→    end
+   145→    req = req .. '}\n'
+   146→    io.write(req)
+   147→    io.flush()
+   148→    local line = io.read("*l")
+   149→    if not line then return nil end
+   150→    -- Very crude JSON parse: extract "result" or "error"
+   151→    local result = line:match('"result"%s*:%s*(.-)%s*[,}]')
+   152→    local err = line:match('"error"%s*:%s*"(.-)"')
+   153→    if err then error("ndbg." .. cmd .. " failed: " .. err) end
+   154→    return result
+   155→end
+   156→
+   157→function ndbg.attach(pid)        rpc("attach", {pid}) end
+   158→function ndbg.launch(path, args) rpc("launch", {path, args or {}}) end
+   159→function ndbg.detach()           rpc("detach", {}) end
+   160→function ndbg.kill()             rpc("kill", {}) end
+   161→function ndbg.continue()         rpc("continue", {}) end
+   162→function ndbg.step()             rpc("step", {}) end
+   163→function ndbg.wait_stop()        rpc("wait_stop", {}) end
+   164→function ndbg.breakpoint(addr)   rpc("breakpoint", {addr}) end
+   165→function ndbg.tbreak(addr)       rpc("tbreak", {addr}) end
+   166→function ndbg.breakpoint_cond(addr, cond) rpc("breakpoint_cond", {addr, cond}) end
+   167→function ndbg.delete(id)         rpc("delete", {id}) end
+   168→function ndbg.read_bytes(addr, n) return rpc("read_bytes", {addr, n}) end
+   169→function ndbg.write_bytes(addr, bytes) rpc("write_bytes", {addr, bytes}) end
+   170→function ndbg.read_register(name) return rpc("read_register", {name}) end
+   171→function ndbg.write_register(name, value) rpc("write_register", {name, value}) end
+   172→function ndbg.disassemble(addr, n) return rpc("disassemble", {addr, n}) end
+   173→function ndbg.backtrace(max)     return rpc("backtrace", {max or 32}) end
+   174→function ndbg.log(msg)           rpc("log", {tostring(msg)}) end
+   175→function ndbg.sleep(ms)          rpc("sleep", {ms}) end
+   176→function ndbg.info_registers()   return rpc("info_registers", {}) end
+   177→function ndbg.info_breakpoints() return rpc("info_breakpoints", {}) end
+   178→
+   179→_G.ndbg = ndbg
+   180→)LUA";
+   181→}
+   182→
+   183→std::string ScriptEngine::pythonBootstrap() const {
+   184→    return R"PY(
+   185→# NinjaDBG Python bootstrap — exposes the `ndbg` module via JSON-RPC over stdin/stdout
+   186→import sys, json
+   187→
+   188→class _Ndbg:
+   189→    def _rpc(self, cmd, args=None):
+   190→        req = {"cmd": cmd, "args": args or []}
+   191→        sys.stdout.write(json.dumps(req) + "\n")
+   192→        sys.stdout.flush()
+   193→        line = sys.stdin.readline()
+   194→        if not line:
+   195→            return None
+   196→        resp = json.loads(line)
+   197→        if "error" in resp:
+   198→            raise RuntimeError("ndbg." + cmd + " failed: " + resp["error"])
+   199→        return resp.get("result")
+   200→
+   201→    def attach(self, pid): self._rpc("attach", [pid])
+   202→    def launch(self, path, args=None): self._rpc("launch", [path, args or []])
+   203→    def detach(self): self._rpc("detach")
+   204→    def kill(self): self._rpc("kill")
+   205→    def continue_(self): self._rpc("continue")
+   206→    def step(self): self._rpc("step")
+   207→    def wait_stop(self): return self._rpc("wait_stop")
+   208→    def breakpoint(self, addr): self._rpc("breakpoint", [addr])
+   209→    def tbreak(self, addr): self._rpc("tbreak", [addr])
+   210→    def breakpoint_cond(self, addr, cond): self._rpc("breakpoint_cond", [addr, cond])
+   211→    def delete(self, id): self._rpc("delete", [id])
+   212→    def read_bytes(self, addr, n): return self._rpc("read_bytes", [addr, n])
+   213→    def write_bytes(self, addr, bytes_): self._rpc("write_bytes", [addr, list(bytes_)])
+   214→    def read_register(self, name): return self._rpc("read_register", [name])
+   215→    def write_register(self, name, value): self._rpc("write_register", [name, value])
+   216→    def disassemble(self, addr, n):
+   217→        result = self._rpc("disassemble", [addr, n])
+   218→        if isinstance(result, str):
+   219→            try: return json.loads(result)
+   220→            except: return [result]
+   221→        return result
+   222→    def backtrace(self, max_frames=32):
+   223→        result = self._rpc("backtrace", [max_frames])
+   224→        if isinstance(result, str):
+   225→            try: return json.loads(result)
+   226→            except: return []
+   227→        return result
+   228→    def log(self, msg): self._rpc("log", [str(msg)])
+   229→    def sleep(self, ms): self._rpc("sleep", [ms])
+   230→    def info_registers(self):
+   231→        result = self._rpc("info_registers")
+   232→        if isinstance(result, str):
+   233→            try: return json.loads(result)
+   234→            except: return {}
+   235→        return result
+   236→    def info_breakpoints(self):
+   237→        result = self._rpc("info_breakpoints")
+   238→        if isinstance(result, str):
+   239→            try: return json.loads(result)
+   240→            except: return []
+   241→        return result
+   242→
+   243→# Create the ndbg instance and register it as a module so that
+   244→# user scripts can do `import ndbg` OR just use `ndbg` directly.
+   245→import sys, types
+   246→_inst = _Ndbg()
+   247→_mod = types.ModuleType('ndbg')
+   248→for _attr in dir(_inst):
+   249→    if not _attr.startswith('_'):
+   250→        setattr(_mod, _attr, getattr(_inst, _attr))
+   251→sys.modules['ndbg'] = _mod
+   252→ndbg = _inst
+   253→del _inst, _mod, _attr, sys, types
+   254→)PY";
+   255→}
+   256→
+   257→// ===== JSON helpers =====
+   258→
+   259→std::string ScriptEngine::jsonString(const std::string& s) {
+   260→    std::string out = "\"";
+   261→    for (char c : s) {
+   262→        if (c == '"' || c == '\\') out += '\\';
+   263→        out += c;
+   264→    }
+   265→    out += "\"";
+   266→    return out;
+   267→}
+   268→
+   269→std::string ScriptEngine::jsonNumber(u64 v) {
+   270→    char buf[32];
+   271→    snprintf(buf, sizeof(buf), "%llu", (unsigned long long)v);
+   272→    return buf;
+   273→}
+   274→
+   275→std::string ScriptEngine::jsonOk(const std::string& result_json) {
+   276→    return "{\"ok\":true,\"result\":" + result_json + "}";
+   277→}
+   278→
+   279→std::string ScriptEngine::jsonError(const std::string& msg) {
+   280→    return "{\"ok\":false,\"error\":" + jsonString(msg) + "}";
+   281→}
+   282→
+   283→std::string ScriptEngine::jsonOkTrue() {
+   284→    return "{\"ok\":true,\"result\":true}";
+   285→}
+   286→
+   287→// ===== API implementations =====
+   288→
+   289→std::string ScriptEngine::apiAttach(const std::vector<std::string>& args) {
+   290→    if (args.size() < 1) return jsonError("attach requires pid");
+   291→    pid_t pid = (pid_t)strtoll(args[0].c_str(), nullptr, 0);
+   292→    if (dbg_.attach(pid)) return jsonOkTrue();
+   293→    return jsonError(dbg_.lastError());
+   294→}
+   295→
+   296→std::string ScriptEngine::apiLaunch(const std::vector<std::string>& args) {
+   297→    if (args.size() < 1) return jsonError("launch requires path");
+   298→    std::vector<std::string> rest;
+   299→    // args[1] would be the args list — simplified: pass empty
+   300→    if (dbg_.attachByLaunch(args[0], rest)) return jsonOkTrue();
+   301→    return jsonError(dbg_.lastError());
+   302→}
+   303→
+   304→std::string ScriptEngine::apiDetach(const std::vector<std::string>&) {
+   305→    return dbg_.detach() ? jsonOkTrue() : jsonError(dbg_.lastError());
+   306→}
+   307→
+   308→std::string ScriptEngine::apiContinue(const std::vector<std::string>&) {
+   309→    return dbg_.cont() ? jsonOkTrue() : jsonError(dbg_.lastError());
+   310→}
+   311→
+   312→std::string ScriptEngine::apiStep(const std::vector<std::string>&) {
+   313→    return dbg_.step() ? jsonOkTrue() : jsonError(dbg_.lastError());
+   314→}
+   315→
+   316→std::string ScriptEngine::apiBreakpoint(const std::vector<std::string>& args) {
+   317→    if (args.size() < 1) return jsonError("breakpoint requires addr");
+   318→    addr_t a = strtoull(args[0].c_str(), nullptr, 0);
+   319→    int id = dbg_.addBreakpoint(a);
+   320→    if (id < 0) return jsonError(dbg_.lastError());
+   321→    return jsonOk(jsonNumber((u64)id));
+   322→}
+   323→
+   324→std::string ScriptEngine::apiReadBytes(const std::vector<std::string>& args) {
+   325→    if (args.size() < 2) return jsonError("read_bytes requires addr and length");
+   326→    addr_t a = strtoull(args[0].c_str(), nullptr, 0);
+   327→    size_t n = (size_t)strtoull(args[1].c_str(), nullptr, 0);
+   328→    auto bytes = dbg_.readMemoryVec(a, n);
+   329→    std::string result = "[";
+   330→    for (size_t i = 0; i < bytes.size(); i++) {
+   331→        if (i > 0) result += ",";
+   332→        result += std::to_string(bytes[i]);
+   333→    }
+   334→    result += "]";
+   335→    return jsonOk(result);
+   336→}
+   337→
+   338→std::string ScriptEngine::apiWriteBytes(const std::vector<std::string>& args) {
+   339→    if (args.size() < 2) return jsonError("write_bytes requires addr and bytes");
+   340→    addr_t a = strtoull(args[0].c_str(), nullptr, 0);
+   341→    std::vector<u8> bytes;
+   342→    // args[1] is a JSON array string like "[144,144,144]"
+   343→    std::string s = args[1];
+   344→    // Strip [ and ]
+   345→    size_t lb = s.find('[');
+   346→    size_t rb = s.find(']');
+   347→    if (lb == std::string::npos || rb == std::string::npos) {
+   348→        return jsonError("bytes must be a JSON array");
+   349→    }
+   350→    std::string body = s.substr(lb + 1, rb - lb - 1);
+   351→    std::istringstream ss(body);
+   352→    std::string tok;
+   353→    while (std::getline(ss, tok, ',')) {
+   354→        bytes.push_back((u8)strtoul(tok.c_str(), nullptr, 0));
+   355→    }
+   356→    if (dbg_.writeMemory(a, bytes.data(), bytes.size())) return jsonOkTrue();
+   357→    return jsonError(dbg_.lastError());
+   358→}
+   359→
+   360→std::string ScriptEngine::apiReadRegister(const std::vector<std::string>& args) {
+   361→    if (args.size() < 1) return jsonError("read_register requires name");
+   362→    RegisterSet r;
+   363→    if (!dbg_.readRegisters(r)) return jsonError("readRegisters failed");
+   364→    std::string name = args[0];
+   365→    // Lowercase
+   366→    for (auto& c : name) c = tolower(c);
+   367→    u64 v = 0;
+   368→    if      (name == "rax") v = r.rax;
+   369→    else if (name == "rbx") v = r.rbx;
+   370→    else if (name == "rcx") v = r.rcx;
+   371→    else if (name == "rdx") v = r.rdx;
+   372→    else if (name == "rsi") v = r.rsi;
+   373→    else if (name == "rdi") v = r.rdi;
+   374→    else if (name == "rbp") v = r.rbp;
+   375→    else if (name == "rsp") v = r.rsp;
+   376→    else if (name == "r8")  v = r.r8;
+   377→    else if (name == "r9")  v = r.r9;
+   378→    else if (name == "r10") v = r.r10;
+   379→    else if (name == "r11") v = r.r11;
+   380→    else if (name == "r12") v = r.r12;
+   381→    else if (name == "r13") v = r.r13;
+   382→    else if (name == "r14") v = r.r14;
+   383→    else if (name == "r15") v = r.r15;
+   384→    else if (name == "rip") v = r.rip;
+   385→    else if (name == "rflags" || name == "eflags") v = r.rflags;
+   386→    else return jsonError("unknown register: " + name);
+   387→    return jsonOk(jsonNumber(v));
+   388→}
+   389→
+   390→std::string ScriptEngine::apiWriteRegister(const std::vector<std::string>& args) {
+   391→    if (args.size() < 2) return jsonError("write_register requires name and value");
+   392→    RegisterSet r;
+   393→    if (!dbg_.readRegisters(r)) return jsonError("readRegisters failed");
+   394→    std::string name = args[0];
+   395→    u64 v = strtoull(args[1].c_str(), nullptr, 0);
+   396→    for (auto& c : name) c = tolower(c);
+   397→    if      (name == "rax") r.rax = v;
+   398→    else if (name == "rbx") r.rbx = v;
+   399→    else if (name == "rcx") r.rcx = v;
+   400→    else if (name == "rdx") r.rdx = v;
+   401→    else if (name == "rsi") r.rsi = v;
+   402→    else if (name == "rdi") r.rdi = v;
+   403→    else if (name == "rbp") r.rbp = v;
+   404→    else if (name == "rsp") r.rsp = v;
+   405→    else if (name == "rip") r.rip = v;
+   406→    else return jsonError("unknown or read-only register: " + name);
+   407→    if (dbg_.writeRegisters(r)) return jsonOkTrue();
+   408→    return jsonError(dbg_.lastError());
+   409→}
+   410→
+   411→std::string ScriptEngine::apiDisassemble(const std::vector<std::string>& args) {
+   412→    if (args.size() < 2) return jsonError("disassemble requires addr and count");
+   413→    addr_t a = strtoull(args[0].c_str(), nullptr, 0);
+   414→    size_t n = (size_t)strtoull(args[1].c_str(), nullptr, 0);
+   415→    auto bytes = dbg_.readMemoryVec(a, n * 15 + 32);
+   416→    if (bytes.empty()) return jsonError("readMemory failed");
+   417→    auto instrs = disas_.disassemble(a, bytes.data(), bytes.size(), n);
+   418→    std::string result = "[";
+   419→    for (size_t i = 0; i < instrs.size(); i++) {
+   420→        if (i > 0) result += ",";
+   421→        result += jsonString(Disassembler::format(instrs[i]));
+   422→    }
+   423→    result += "]";
+   424→    return jsonOk(result);
+   425→}
+   426→
+   427→std::string ScriptEngine::apiLog(const std::vector<std::string>& args) {
+   428→    if (!args.empty()) {
+   429→        std::cout << "[script] " << args[0] << std::endl;
+   430→    }
+   431→    return jsonOkTrue();
+   432→}
+   433→
+   434→std::string ScriptEngine::apiSleep(const std::vector<std::string>& args) {
+   435→    if (args.size() < 1) return jsonError("sleep requires ms");
+   436→    int ms = atoi(args[0].c_str());
+   437→    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+   438→    return jsonOkTrue();
+   439→}
+   440→
+   441→std::string ScriptEngine::apiWaitStop(const std::vector<std::string>&) {
+   442→    int sig; bool ex; int code;
+   443→    if (dbg_.waitForStop(sig, ex, code)) {
+   444→        std::string result = "{\"signal\":" + std::to_string(sig) +
+   445→                             ",\"exited\":" + (ex ? "true" : "false") +
+   446→                             ",\"exit_code\":" + std::to_string(code) + "}";
+   447→        return jsonOk(result);
+   448→    }
+   449→    return jsonError("wait_stop failed");
+   450→}
+   451→
+   452→std::string ScriptEngine::apiBacktrace(const std::vector<std::string>& args) {
+   453→    size_t max = args.size() > 0 ? (size_t)strtoull(args[0].c_str(), nullptr, 0) : 32;
+   454→    auto frames = dbg_.backtrace(max);
+   455→    std::string result = "[";
+   456→    for (size_t i = 0; i < frames.size(); i++) {
+   457→        if (i > 0) result += ",";
+   458→        result += "{\"rip\":" + jsonNumber(frames[i].rip) +
+   459→                  ",\"symbol\":" + jsonString(frames[i].symbol) + "}";
+   460→    }
+   461→    result += "]";
+   462→    return jsonOk(result);
+   463→}
+   464→
+   465→std::string ScriptEngine::apiInfo(const std::vector<std::string>& args) {
+   466→    if (args.empty()) return jsonError("info requires subcommand");
+   467→    if (args[0] == "registers") {
+   468→        RegisterSet r;
+   469→        if (!dbg_.readRegisters(r)) return jsonError("readRegisters failed");
+   470→        u64* vals[] = {&r.rax,&r.rbx,&r.rcx,&r.rdx,&r.rsi,&r.rdi,&r.rbp,&r.rsp,
+   471→                       &r.r8,&r.r9,&r.r10,&r.r11,&r.r12,&r.r13,&r.r14,&r.r15,
+   472→                       &r.rip,&r.rflags};
+   473→        std::string result = "{";
+   474→        for (int i = 0; i < 18; i++) {
+   475→            if (i > 0) result += ",";
+   476→            // Lowercase the name
+   477→            std::string n = kRegNames[i];
+   478→            for (auto& c : n) c = tolower(c);
+   479→            // Trim trailing space
+   480→            while (!n.empty() && n.back() == ' ') n.pop_back();
+   481→            result += jsonString(n) + ":" + jsonNumber(*vals[i]);
+   482→        }
+   483→        result += "}";
+   484→        return jsonOk(result);
+   485→    }
+   486→    if (args[0] == "breakpoints") {
+   487→        auto bps = dbg_.breakpoints();
+   488→        std::string result = "[";
+   489→        for (size_t i = 0; i < bps.size(); i++) {
+   490→            if (i > 0) result += ",";
+   491→            result += "{\"id\":" + std::to_string(bps[i].id) +
+   492→                      ",\"addr\":" + jsonNumber(bps[i].address) +
+   493→                      ",\"hits\":" + std::to_string(bps[i].hit_count) +
+   494→                      ",\"cond\":" + jsonString(bps[i].condition) + "}";
+   495→        }
+   496→        result += "]";
+   497→        return jsonOk(result);
+   498→    }
+   499→    return jsonError("unknown info subcommand: " + args[0]);
+   500→}
+   501→
+   502→// ===== Request dispatch =====
+   503→
+   504→std::string ScriptEngine::handleRequest(const std::string& json_req) {
+   505→    // Crude JSON parse: extract "cmd" and "args"
+   506→    std::string cmd;
+   507→    auto cmd_pos = json_req.find("\"cmd\"");
+   508→    if (cmd_pos == std::string::npos) return jsonError("missing cmd");
+   509→    auto colon = json_req.find(':', cmd_pos);
+   510→    auto quote1 = json_req.find('"', colon + 1);
+   511→    auto quote2 = json_req.find('"', quote1 + 1);
+   512→    if (quote1 == std::string::npos || quote2 == std::string::npos) return jsonError("bad cmd");
+   513→    cmd = json_req.substr(quote1 + 1, quote2 - quote1 - 1);
+   514→
+   515→    // Parse args array (very crude)
+   516→    std::vector<std::string> args;
+   517→    auto args_pos = json_req.find("\"args\"");
+   518→    if (args_pos != std::string::npos) {
+   519→        auto lb = json_req.find('[', args_pos);
+   520→        auto rb = json_req.find(']', lb);
+   521→        if (lb != std::string::npos && rb != std::string::npos) {
+   522→            std::string body = json_req.substr(lb + 1, rb - lb - 1);
+   523→            // Tokenize: split on commas, but respect quotes
+   524→            size_t i = 0;
+   525→            while (i < body.size()) {
+   526→                while (i < body.size() && (body[i] == ' ' || body[i] == ',')) i++;
+   527→                if (i >= body.size()) break;
+   528→                if (body[i] == '"') {
+   529→                    // String
+   530→                    size_t end = body.find('"', i + 1);
+   531→                    if (end == std::string::npos) break;
+   532→                    args.push_back(body.substr(i + 1, end - i - 1));
+   533→                    i = end + 1;
+   534→                } else {
+   535→                    // Number or other — read until comma
+   536→                    size_t end = body.find(',', i);
+   537→                    if (end == std::string::npos) end = body.size();
+   538→                    std::string tok = body.substr(i, end - i);
+   539→                    // Trim
+   540→                    while (!tok.empty() && isspace(tok.back())) tok.pop_back();
+   541→                    while (!tok.empty() && isspace(tok.front())) tok.erase(0, 1);
+   542→                    args.push_back(tok);
+   543→                    i = end;
+   544→                }
+   545→            }
+   546→        }
+   547→    }
+   548→
+   549→    if (cmd == "attach")         return apiAttach(args);
+   550→    if (cmd == "launch")         return apiLaunch(args);
+   551→    if (cmd == "detach")         return apiDetach(args);
+   552→    if (cmd == "continue")       return apiContinue(args);
+   553→    if (cmd == "step")           return apiStep(args);
+   554→    if (cmd == "breakpoint")     return apiBreakpoint(args);
+   555→    if (cmd == "read_bytes")     return apiReadBytes(args);
+   556→    if (cmd == "write_bytes")    return apiWriteBytes(args);
+   557→    if (cmd == "read_register")  return apiReadRegister(args);
+   558→    if (cmd == "write_register") return apiWriteRegister(args);
+   559→    if (cmd == "disassemble")    return apiDisassemble(args);
+   560→    if (cmd == "log")            return apiLog(args);
+   561→    if (cmd == "sleep")          return apiSleep(args);
+   562→    if (cmd == "wait_stop")      return apiWaitStop(args);
+   563→    if (cmd == "backtrace")      return apiBacktrace(args);
+   564→    if (cmd == "info")           return apiInfo(args);
+   565→    // Convenience: scripts send info_registers / info_breakpoints directly
+   566→    if (cmd == "info_registers") {
+   567→        std::vector<std::string> a; a.push_back("registers");
+   568→        return apiInfo(a);
+   569→    }
+   570→    if (cmd == "info_breakpoints") {
+   571→        std::vector<std::string> a; a.push_back("breakpoints");
+   572→        return apiInfo(a);
+   573→    }
+   574→    return jsonError("unknown command: " + cmd);
+   575→}
+   576→
+   577→// ===== Subprocess execution =====
+   578→
+   579→bool ScriptEngine::executeViaJsonRpc(const std::string& interpreter,
+   580→                                       const std::string& bootstrap,
+   581→                                       const std::string& user_code,
+   582→                                       std::string& err) {
+   583→    // Create two pipes: parent->child (stdin) and child->parent (stdout)
+   584→    int in_pipe[2], out_pipe[2];
+   585→    if (pipe(in_pipe) < 0 || pipe(out_pipe) < 0) {
+   586→        err = "pipe failed";
+   587→        return false;
+   588→    }
+   589→    pid_t pid = fork();
+   590→    if (pid < 0) {
+   591→        err = "fork failed";
+   592→        return false;
+   593→    }
+   594→    if (pid == 0) {
+   595→        // Child
+   596→        close(in_pipe[1]);
+   597→        close(out_pipe[0]);
+   598→        dup2(in_pipe[0], STDIN_FILENO);
+   599→        dup2(out_pipe[1], STDOUT_FILENO);
+   600→        close(in_pipe[0]);
+   601→        close(out_pipe[1]);
+   602→        // Build the script: bootstrap + user code
+   603→        std::string full = bootstrap + "\n" + user_code;
+   604→        // Pass via -e (Lua) or -c (Python)
+   605→        std::vector<const char*> argv;
+   606→        if (interpreter.find("python") != std::string::npos) {
+   607→            argv.push_back(interpreter.c_str());
+   608→            argv.push_back("-c");
+   609→            argv.push_back(full.c_str());
+   610→        } else {
+   611→            argv.push_back(interpreter.c_str());
+   612→            argv.push_back("-e");
+   613→            argv.push_back(full.c_str());
+   614→        }
+   615→        argv.push_back(nullptr);
+   616→        execvp(interpreter.c_str(), const_cast<char* const*>(argv.data()));
+   617→        _exit(127);
+   618→    }
+   619→    // Parent
+   620→    close(in_pipe[0]);
+   621→    close(out_pipe[1]);
+   622→
+   623→    // Write loop: respond to RPC requests
+   624→    FILE* in = fdopen(in_pipe[1], "w");
+   625→    FILE* out = fdopen(out_pipe[0], "r");
+   626→    if (!in || !out) { err = "fdopen failed"; return false; }
+   627→
+   628→    char line[8192];
+   629→    while (fgets(line, sizeof(line), out)) {
+   630→        // Strip newline
+   631→        size_t len = strlen(line);
+   632→        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) line[--len] = 0;
+   633→        if (len == 0) continue;
+   634→
+   635→        std::string req(line);
+   636→        std::string resp = handleRequest(req);
+   637→        fprintf(in, "%s\n", resp.c_str());
+   638→        fflush(in);
+   639→    }
+   640→
+   641→    fclose(in);
+   642→    fclose(out);
+   643→    int status;
+   644→    waitpid(pid, &status, 0);
+   645→    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+   646→        err = "script exited with code " + std::to_string(WEXITSTATUS(status));
+   647→        return false;
+   648→    }
+   649→    return true;
+   650→}
+   651→
+   652→bool ScriptEngine::runFile(Lang lang, const std::string& path, std::string& err) {
+   653→    std::ifstream f(path);
+   654→    if (!f) { err = "Cannot open script: " + path; return false; }
+   655→    std::stringstream ss;
+   656→    ss << f.rdbuf();
+   657→    return runString(lang, ss.str(), err);
+   658→}
+   659→
+   660→bool ScriptEngine::runString(Lang lang, const std::string& code, std::string& err) {
+   661→    if (!isAvailable(lang)) {
+   662→        err = installHint(lang);
+   663→        return false;
+   664→    }
+   665→    std::string interpreter;
+   666→    std::string bootstrap;
+   667→    if (lang == Lang::Lua) {
+   668→        if (binaryInPath("lua5.4"))      interpreter = "lua5.4";
+   669→        else if (binaryInPath("lua5.3")) interpreter = "lua5.3";
+   670→        else if (binaryInPath("lua5.1")) interpreter = "lua5.1";
+   671→        else                              interpreter = "lua";
+   672→        bootstrap = luaBootstrap();
+   673→    } else {
+   674→        if (binaryInPath("python3")) interpreter = "python3";
+   675→        else                          interpreter = "python";
+   676→        bootstrap = pythonBootstrap();
+   677→    }
+   678→    return executeViaJsonRpc(interpreter, bootstrap, code, err);
+   679→}
+   680→
+   681→} // namespace ndbg
+   682→

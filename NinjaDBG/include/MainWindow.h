@@ -1,5 +1,5 @@
 // NinjaDBG v1.0.2 - Main Window & App Controller
-// Closed Source - Free - by Chapzoo
+// Open Source (MIT) - by Chapzoo
 #pragma once
 
 #include "Types.h"

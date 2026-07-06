@@ -1,5 +1,5 @@
-// NinjaDBG v1.0.5 - PlatformAdapters implementation
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - PlatformAdapters implementation
+// Open Source (MIT) - by Chapzoo
 #include "PlatformAdapters.h"
 #include "DebuggerCore.h"
 #include <fstream>

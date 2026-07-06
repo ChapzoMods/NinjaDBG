@@ -1,17 +1,17 @@
-// NinjaDBG v1.0.5 - Headless CLI
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - Headless CLI
+// Open Source (MIT) - by Chapzoo
 //
 // Full-featured command-line interface to NinjaDBG. Designed for:
 //   - Scripted / automated debugging (CI, malware analysis pipelines)
 //   - SSH-only environments where no X server is available
 //   - Use as a gdbserver-style backend for other frontends
 //
-// v1.0.5 adds:
+// v1.1.0 adds:
 //   - disas: full x86-64 disassembly (standalone Disassembler module)
 //   - edit:  interactive TUI memory editor (VT100, no ncurses)
 //   - script run: Lua + Python scripting via JSON-RPC subprocess
 //
-// v1.0.5 adds:
+// v1.1.0 adds:
 //   - decomp: native C decompilation via RetDec / angr backends
 //
 // Commands follow gdb-like syntax where possible:
@@ -31,17 +31,17 @@
 //   x /Nxb <addr>            (examine N bytes in hex)
 //   x /Nxw <addr>            (examine N words)
 //   set <addr> = <bytes>
-//   disas [addr] [count]     [v1.0.5 — full x86-64 decoder]
-//   edit [addr]              [v1.0.5 — interactive TUI memory editor]
-//   decomp [addr]            [v1.0.5 — native C decompilation via RetDec/angr]
-//   decomp file <bin> [addr] [v1.0.5 — decompile whole file or function]
-//   decomp <list|api|set>    [v1.0.5 — backend management]
+//   disas [addr] [count]     [v1.1.0 — full x86-64 decoder]
+//   edit [addr]              [v1.1.0 — interactive TUI memory editor]
+//   decomp [addr]            [v1.1.0 — native C decompilation via RetDec/angr]
+//   decomp file <bin> [addr] [v1.1.0 — decompile whole file or function]
+//   decomp <list|api|set>    [v1.1.0 — backend management]
 //   backtrace | bt
 //   patch <list|apply|nop|save|undo|info>
 //   stealth <list|on|off>
 //   kernel <status|load|unload>
 //   target <binary>          (load binary for static patching)
-//   script <list|run|api>    [v1.0.5 — Lua + Python scripting]
+//   script <list|run|api>    [v1.1.0 — Lua + Python scripting]
 //   help [cmd]
 //   quit | q
 #pragma once
@@ -55,6 +55,7 @@
 #include "Disassembler.h"
 #include "ScriptEngine.h"
 #include "Decompiler.h"
+#include "PrettyPrinter.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -69,7 +70,8 @@ public:
     ~HeadlessCLI();
 
     // Run the REPL. Returns process exit code.
-    int run(int argc, char** argv);
+    // If skip_eula is true, the EULA acceptance prompt is skipped (for --no-eula-check).
+    int run(int argc, char** argv, bool skip_eula = false);
 
     // Print version banner
     void printBanner();
@@ -87,6 +89,7 @@ private:
     std::unique_ptr<ScriptEngine> script_;
     std::unique_ptr<InteractiveMemoryEditor> editor_;
     Decompiler decompiler_;
+    PrettyPrinter pretty_;
 
     bool running_ = true;
     bool eula_accepted_ = false;
@@ -114,6 +117,7 @@ private:
     void cmdDisas(const std::vector<std::string>& args);
     void cmdEdit(const std::vector<std::string>& args);
     void cmdDecomp(const std::vector<std::string>& args);
+    void cmdPretty(const std::vector<std::string>& args);
     void cmdBacktrace(const std::vector<std::string>& args);
     void cmdPatch(const std::vector<std::string>& args);
     void cmdStealth(const std::vector<std::string>& args);

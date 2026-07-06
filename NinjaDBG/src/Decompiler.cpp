@@ -1,5 +1,5 @@
-// NinjaDBG v1.0.5 - Decompiler implementation (RetDec / angr backend)
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - Decompiler implementation (RetDec / angr backend)
+// Open Source (MIT) - by Chapzoo
 #include "Decompiler.h"
 #include <iostream>
 #include <fstream>
@@ -313,6 +313,7 @@ Decompiler::Result Decompiler::decompileAngrSubprocess(const std::string& binary
             "    if fn.is_simprocedure or fn.is_plt or fn.is_syscall:\n"
             "        continue\n"
             "    try:\n"
+            "        fn.normalize()\n"
             "        dec = p.analyses.Decompiler(fn)\n"
             "        if dec.codegen is not None:\n"
             "            out.append('---- function ' + fn.name + ' at 0x%x ----' % fn.addr)\n"
@@ -332,6 +333,7 @@ Decompiler::Result Decompiler::decompileAngrSubprocess(const std::string& binary
             "fn = cfg.kb.functions.get(target)\n"
             "if fn is None:\n"
             "    sys.stderr.write('No function at 0x%x' % target); sys.exit(1)\n"
+            "fn.normalize()\n"
             "dec = p.analyses.Decompiler(fn)\n"
             "if dec.codegen is None:\n"
             "    sys.stderr.write('decompiler returned no code'); sys.exit(1)\n"
@@ -625,7 +627,7 @@ std::vector<Decompiler::FunctionInfo> Decompiler::listFunctions(const std::strin
 
 std::string Decompiler::apiDocs() {
     return R"DOCS(
-NinjaDBG v1.0.5 Decompilation API
+NinjaDBG v1.1.0 Decompilation API
 ==================================
 
 NinjaDBG integrates Avast's RetDec decompiler (and optionally angr) to

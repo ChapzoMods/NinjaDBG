@@ -1,5 +1,5 @@
-// NinjaDBG v1.0.5 - Welcome screen + EULA
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - Welcome screen + EULA
+// Open Source (MIT) - by Chapzoo
 //
 // First-run experience: a welcome screen introducing NinjaDBG, followed by
 // the EULA (End User License Agreement). The EULA must be accepted before

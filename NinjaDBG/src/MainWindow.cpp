@@ -1,5 +1,5 @@
 // NinjaDBG v1.0.2 - MainWindow implementation (part 1: init, event loop, helpers)
-// Closed Source - Free - by Chapzoo
+// Open Source (MIT) - by Chapzoo
 #include "MainWindow.h"
 #include "UITheme.h"
 #include <X11/keysym.h>
@@ -37,8 +37,11 @@ MainWindow::MainWindow() {
     dbg_.setAntiDetect(&anti_);
 }
 MainWindow::~MainWindow() {
-    if (surf_) cairo_surface_destroy(surf_);
+    // IMPORTANT: destroy cairo_t (cr_) BEFORE cairo_surface_t (surf_),
+    // because cr_ holds a reference to surf_. Destroying the surface
+    // first leaves cr_ pointing at freed memory — undefined behavior.
     if (cr_) cairo_destroy(cr_);
+    if (surf_) cairo_surface_destroy(surf_);
     if (logo_surf_) cairo_surface_destroy(logo_surf_);
     for (auto& kv : icon_surfs_) if (kv.second) cairo_surface_destroy(kv.second);
     if (font_title_) pango_font_description_free(font_title_);
@@ -98,7 +101,7 @@ bool MainWindow::init(int w, int h) {
     // Enable anti-detect defaults
     log("NinjaDBG v1.0.2 initialized", "info");
     log("Stealth subsystem online — 6 techniques active", "ok");
-    log("Closed Source - Free - Created by Chapzoo", "info");
+    log("Open Source (MIT) - Created by Chapzoo", "info");
     log("Click [Attach] to debug a running process, or [Launch] to start a new target.", "info");
 
     return true;
@@ -650,7 +653,7 @@ void MainWindow::actionKill() {
 }
 void MainWindow::actionAbout() {
     modal_ = Modal::About;
-    log("About: NinjaDBG v1.0.2 — Closed Source, Free, by Chapzoo", "info");
+    log("About: NinjaDBG v1.1.0 — Open Source (MIT), by Chapzoo", "info");
     invalidate();
 }
 

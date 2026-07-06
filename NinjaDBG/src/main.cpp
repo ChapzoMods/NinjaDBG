@@ -1,5 +1,5 @@
-// NinjaDBG v1.0.5 - Entry point
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - Entry point
+// Open Source - MIT License - by Chapzoo
 //
 // Mode selection:
 //   ninjadb              → GUI (experimental) — default
@@ -15,40 +15,47 @@
 #include <unistd.h>
 
 int main(int argc, char** argv) {
-    // Detect --cli flag
+    // Parse top-level flags
     bool cli_mode = false;
     bool no_eula = false;
+    bool show_help = false;
     for (int i = 1; i < argc; i++) {
-        if (std::string(argv[i]) == "--cli" || std::string(argv[i]) == "-c" ||
-            std::string(argv[i]) == "--cli") {
+        std::string a = argv[i];
+        if (a == "--cli") {
             cli_mode = true;
+        } else if (a == "--no-eula-check") {
+            no_eula = true;
+        } else if (a == "--help" || a == "-h") {
+            show_help = true;
         }
-        if (std::string(argv[i]) == "--no-eula-check") no_eula = true;
-        if (std::string(argv[i]) == "--help" || std::string(argv[i]) == "-h") {
-            std::cout <<
-                "NinjaDBG v1.0.5 — Stealth Debugger\n"
-                "Closed Source - Free - Created by Chapzoo\n\n"
-                "Usage:\n"
-                "  ninjadb                  Launch GUI (EXPERIMENTAL — under development)\n"
-                "  ninjadb --cli            Headless CLI mode (recommended for production)\n"
-                "  ninjadb --cli -c \"cmds\"  Execute commands in batch mode\n"
-                "  ninjadb --no-eula-check  Skip EULA acceptance prompt\n"
-                "  ninjadb --help           Show this help\n\n"
-                "The GUI is experimental. For full feature coverage (patching, kernel\n"
-                "stealth, conditional breakpoints, watchpoints, syscall stepping), use\n"
-                "the headless CLI.\n";
-            return 0;
-        }
+        // Note: -c / --commands is handled inside HeadlessCLI::run()
+        // and does NOT activate cli_mode by itself.
+    }
+
+    if (show_help) {
+        std::cout <<
+            "NinjaDBG v1.1.0 — Stealth Debugger\n"
+            "Open Source (MIT License) - Created by Chapzoo\n\n"
+            "Usage:\n"
+            "  ninjadb                  Launch GUI (EXPERIMENTAL — under development)\n"
+            "  ninjadb --cli            Headless CLI mode (recommended for production)\n"
+            "  ninjadb --cli -c \"cmds\"  Execute commands in batch mode (separated by ;)\n"
+            "  ninjadb --no-eula-check  Skip EULA acceptance prompt\n"
+            "  ninjadb --help           Show this help\n\n"
+            "The GUI is experimental. For full feature coverage (patching, kernel\n"
+            "stealth, conditional breakpoints, watchpoints, syscall stepping,\n"
+            "decompilation, pretty printers, scripting), use the headless CLI.\n";
+        return 0;
     }
 
     if (cli_mode) {
         ndbg::HeadlessCLI cli;
-        return cli.run(argc, argv);
+        return cli.run(argc, argv, no_eula);
     }
 
     // GUI mode (experimental)
-    std::cout << "NinjaDBG v1.0.5 - Stealth Debugger" << std::endl;
-    std::cout << "Closed Source - Free - Created by Chapzoo" << std::endl;
+    std::cout << "NinjaDBG v1.1.0 - Stealth Debugger" << std::endl;
+    std::cout << "Open Source (MIT License) - Created by Chapzoo" << std::endl;
     std::cout << std::endl;
     std::cout << "*** NOTE: The GUI is EXPERIMENTAL and still under active development. ***" << std::endl;
     std::cout << "*** For production use, run:  ninjadb --cli                              ***" << std::endl;
@@ -77,8 +84,7 @@ int main(int argc, char** argv) {
     }
     w.setStatus("Ready - click [Attach] to debug a process  -  GUI is EXPERIMENTAL");
     w.log("GUI is EXPERIMENTAL — for full features use: ninjadb --cli", "warn");
-    w.log("v1.0.5 adds: headless CLI, kernel stealth, binary patching, "
-          "conditional bps, watchpoints, step-over/step-out, cross-platform (Win/Mac)", "info");
+    w.log("v1.1.0: bug fixes, pretty printers, Open Source (MIT)", "info");
     w.run();
     return 0;
 }

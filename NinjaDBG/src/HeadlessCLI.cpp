@@ -1,5 +1,5 @@
-// NinjaDBG v1.0.5 - HeadlessCLI implementation
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - HeadlessCLI implementation
+// Open Source (MIT) - by Chapzoo
 #include "HeadlessCLI.h"
 #include "WelcomeScreen.h"
 #include "InteractiveMemoryEditor.h"
@@ -35,9 +35,9 @@ void HeadlessCLI::printBanner() {
         " | |\\  | | |_| | | | (_| | | | |_| |\\___ \\ \n"
         " |_| \\_|_|\\__|_| |_|\\__,_|_|  \\___/|____) |\n"
         "\n"
-        "  v1.0.5 — Stealth Debugger  (Closed Source - Free - by Chapzoo)\n"
+        "  v1.1.0 — Stealth Debugger  (Open Source (MIT) - by Chapzoo)\n"
         "  Headless CLI mode. Type 'help' for command list, 'quit' to exit.\n"
-        "  New in v1.0.5: decomp (native C decompilation via RetDec/angr)\n"
+        "  New in v1.1.0: decomp (native C decompilation via RetDec/angr)\n"
         "\n";
 }
 
@@ -132,6 +132,7 @@ void HeadlessCLI::execute(const std::string& line) {
     else if (cmd == "disas" || cmd == "dis") cmdDisas(args);
     else if (cmd == "edit")   cmdEdit(args);
     else if (cmd == "decomp" || cmd == "dec") cmdDecomp(args);
+    else if (cmd == "pretty" || cmd == "pp") cmdPretty(args);
     else if (cmd == "script") cmdScript(args);
     else if (cmd == "backtrace" || cmd == "bt") cmdBacktrace(args);
     else if (cmd == "patch") cmdPatch(args);
@@ -237,12 +238,12 @@ void HeadlessCLI::cmdInfo(const std::vector<std::string>& args) {
         out("Usage: info <breakpoints|registers|threads|maps|target>");
         return;
     }
-    if (args[0] == "breakpoints" || args[0] == "bp") printBreakpoints();
+    if (args[0] == "breakpoints" || args[0] == "bp" || args[0] == "b") printBreakpoints();
     else if (args[0] == "registers" || args[0] == "reg" || args[0] == "r") printRegisters();
     else if (args[0] == "threads" || args[0] == "t") printThreads();
     else if (args[0] == "maps" || args[0] == "m") printMaps();
     else if (args[0] == "target") printTargetInfo();
-    else err("Unknown info subcommand: " + args[0]);
+    else err("Unknown info subcommand: " + args[0] + " (valid: b|bp|breakpoints|r|reg|registers|t|threads|m|maps|target)");
 }
 
 void HeadlessCLI::cmdExamine(const std::vector<std::string>& args) {
@@ -481,6 +482,107 @@ void HeadlessCLI::printDecompStatus() {
     out("  decomp set <backend>         Force backend (auto/retdec-native/retdec-subprocess/angr)");
 }
 
+void HeadlessCLI::cmdPretty(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        out("Active language: " + PrettyPrinter::languageName(pretty_.currentLanguage()));
+        out("Available: c, cpp, rust, go, python");
+        out("Use 'pretty api' for full documentation.");
+        return;
+    }
+    std::string sub = args[0];
+
+    if (sub == "list") {
+        out("Pretty printers available:");
+        for (auto l : PrettyPrinter::allLanguages()) {
+            out("  " + PrettyPrinter::languageName(l));
+        }
+        out("Current: " + PrettyPrinter::languageName(pretty_.currentLanguage()));
+        return;
+    }
+    if (sub == "api") {
+        std::cout << PrettyPrinter::apiDocs() << std::endl;
+        return;
+    }
+    if (sub == "set") {
+        if (args.size() < 2) { err("usage: pretty set <c|cpp|rust|go|python|none>"); return; }
+        std::string lang = args[1];
+        if (lang == "c" || lang == "C")             pretty_.setLanguage(PrettyPrinter::Language::C);
+        else if (lang == "cpp" || lang == "c++" || lang == "C++") pretty_.setLanguage(PrettyPrinter::Language::Cpp);
+        else if (lang == "rust" || lang == "rs")    pretty_.setLanguage(PrettyPrinter::Language::Rust);
+        else if (lang == "go" || lang == "golang")  pretty_.setLanguage(PrettyPrinter::Language::Go);
+        else if (lang == "python" || lang == "py")  pretty_.setLanguage(PrettyPrinter::Language::Python);
+        else if (lang == "none" || lang == "off")   pretty_.setLanguage(PrettyPrinter::Language::NoLanguage);
+        else { err("unknown language: " + lang); return; }
+        out("Pretty printer language set to: " + lang);
+        return;
+    }
+
+    // All remaining subcommands need an attached process
+    if (dbg_.pid() == 0) { err("Not attached. Use 'attach <pid>' first."); return; }
+
+    if (sub == "auto") {
+        if (args.size() < 2) { err("usage: pretty auto <addr>"); return; }
+        bool ok; addr_t a = parseAddr(args[1], &ok);
+        if (!ok) { err("bad address"); return; }
+        out(pretty_.autoPrint(dbg_, a));
+        return;
+    }
+    if (sub == "cstring") {
+        if (args.size() < 2) { err("usage: pretty cstring <addr>"); return; }
+        bool ok; addr_t a = parseAddr(args[1], &ok);
+        if (!ok) { err("bad address"); return; }
+        out(pretty_.printCString(dbg_, a));
+        return;
+    }
+    if (sub == "cpp_string" || sub == "cppstring" || sub == "stdstring") {
+        if (args.size() < 2) { err("usage: pretty cpp_string <addr>"); return; }
+        bool ok; addr_t a = parseAddr(args[1], &ok);
+        if (!ok) { err("bad address"); return; }
+        out(pretty_.printCppString(dbg_, a));
+        return;
+    }
+    if (sub == "rust_string" || sub == "ruststring") {
+        if (args.size() < 2) { err("usage: pretty rust_string <addr>"); return; }
+        bool ok; addr_t a = parseAddr(args[1], &ok);
+        if (!ok) { err("bad address"); return; }
+        out(pretty_.printRustString(dbg_, a));
+        return;
+    }
+    if (sub == "go_string" || sub == "gostring") {
+        if (args.size() < 2) { err("usage: pretty go_string <addr>"); return; }
+        bool ok; addr_t a = parseAddr(args[1], &ok);
+        if (!ok) { err("bad address"); return; }
+        out(pretty_.printGoString(dbg_, a));
+        return;
+    }
+    if (sub == "py_string" || sub == "pystring" || sub == "python_string") {
+        if (args.size() < 2) { err("usage: pretty py_string <addr>"); return; }
+        bool ok; addr_t a = parseAddr(args[1], &ok);
+        if (!ok) { err("bad address"); return; }
+        out(pretty_.printPyString(dbg_, a));
+        return;
+    }
+    if (sub == "struct") {
+        if (args.size() < 3) {
+            err("usage: pretty struct <addr> <descriptor>");
+            err("  descriptor: comma-separated types, e.g. i32,str,ptr,u64");
+            err("  valid types: i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 ptr str hex<N>");
+            return;
+        }
+        bool ok; addr_t a = parseAddr(args[1], &ok);
+        if (!ok) { err("bad address"); return; }
+        // Reconstruct descriptor (may contain commas that were split)
+        std::string desc;
+        for (size_t i = 2; i < args.size(); i++) {
+            if (i > 2) desc += ",";
+            desc += args[i];
+        }
+        std::cout << pretty_.printStruct(dbg_, a, desc) << std::endl;
+        return;
+    }
+    err("unknown pretty subcommand: " + sub + " (valid: set|list|api|auto|cstring|cpp_string|rust_string|go_string|py_string|struct)");
+}
+
 void HeadlessCLI::cmdScript(const std::vector<std::string>& args) {
     if (args.empty()) { printScriptStatus(); return; }
     std::string sub = args[0];
@@ -604,8 +706,22 @@ void HeadlessCLI::cmdPatch(const std::vector<std::string>& args) {
         if (patcher_.save(args[1])) out("Saved patched binary to " + args[1]);
         else err("save failed: " + patcher_.lastError());
     } else if (sub == "undo") {
-        if (args.size() < 2) { err("usage: patch undo <id>"); return; }
+        // patch undo [id]  — if no id, undo the last applied patch
+        if (args.size() < 2) {
+            // Undo the last patch
+            auto& patches = patcher_.patches();
+            if (patches.empty()) { err("No patches to undo"); return; }
+            int last = (int)patches.size() - 1;
+            if (patcher_.undoPatch(last)) out("Undone patch " + std::to_string(last) + " (last)");
+            else err("undo failed");
+            return;
+        }
         int id = atoi(args[1].c_str());
+        if (id < 0 || id >= (int)patcher_.patches().size()) {
+            err("Invalid patch id " + std::to_string(id) + " — valid range: 0.." +
+                std::to_string(patcher_.patches().size() - 1) + " (use 'patch list' to see IDs)");
+            return;
+        }
         if (patcher_.undoPatch(id)) out("Undone patch " + std::to_string(id));
         else err("undo failed");
     } else {
@@ -675,7 +791,7 @@ void HeadlessCLI::cmdTarget(const std::vector<std::string>& args) {
 }
 
 void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
-    out("NinjaDBG v1.0.5 CLI commands:\n"
+    out("NinjaDBG v1.1.0 CLI commands:\n"
         "  attach <pid>                  Attach to a running process\n"
         "  launch <bin> [args...]        Launch a new process under the debugger\n"
         "  detach                        Detach from the target\n"
@@ -692,27 +808,35 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
         "  x /Nxb <addr>                 Examine N bytes in hex\n"
         "  x /Nxw <addr>                 Examine N words\n"
         "  set <addr> = <byte>...        Write bytes to memory\n"
-        "  disas [addr] [count]          [v1.0.5] Full x86-64 disassembly\n"
-        "  edit [addr]                   [v1.0.5] Interactive TUI memory editor\n"
-        "  decomp [addr] [max_bytes]     [v1.0.5] Native C decompilation via RetDec/angr\n"
-        "  decomp file <bin> [addr]      [v1.0.5] Decompile whole file or one function\n"
-        "  decomp <list|api|set>         [v1.0.5] Backend management\n"
+        "  disas [addr] [count]          Full x86-64 disassembly\n"
+        "  edit [addr]                   Interactive TUI memory editor\n"
+        "  decomp [addr] [max_bytes]     Native C decompilation via RetDec/angr\n"
+        "  decomp file <bin> [addr]      Decompile whole file or one function\n"
+        "  decomp <list|api|set>         Decompiler backend management\n"
+        "  pretty set <lang>             [v1.1.0] Set pretty printer language (c|cpp|rust|go|python)\n"
+        "  pretty cstring <addr>         [v1.1.0] Print C string at addr\n"
+        "  pretty cpp_string <addr>      [v1.1.0] Print std::string at addr\n"
+        "  pretty rust_string <addr>     [v1.1.0] Print Rust String at addr\n"
+        "  pretty go_string <addr>       [v1.1.0] Print Go string at addr\n"
+        "  pretty py_string <addr>       [v1.1.0] Print CPython str at addr\n"
+        "  pretty struct <addr> <desc>   [v1.1.0] Parse struct (e.g. i32,str,ptr)\n"
+        "  pretty <list|api>             [v1.1.0] Show printers / API docs\n"
         "  bt | backtrace                Show call stack\n"
         "  target <binary>               Load a binary for static patching\n"
         "  patch list                    List applied patches\n"
         "  patch nop <off> <len>         NOP a byte range\n"
         "  patch apply <off> <kind> [b]  Apply a patch (nop/jmp/nojmp/callnop/rettrue/ascii)\n"
         "  patch save <outfile>          Save patched binary\n"
-        "  patch undo <id>               Undo a patch\n"
+        "  patch undo [id]               Undo a patch (default: last)\n"
         "  stealth list                  List anti-detect techniques\n"
         "  stealth on|off <name>         Enable/disable a technique\n"
         "  kernel status                 Show kernel module status\n"
         "  kernel load                   Build + load the stealth LKM\n"
         "  kernel unload                 Unload the LKM\n"
-        "  script list                   [v1.0.5] Show scripting backend status\n"
-        "  script api                    [v1.0.5] Print Lua/Python API docs\n"
-        "  script run lua <file|code>    [v1.0.5] Run a Lua script\n"
-        "  script run python <file|code> [v1.0.5] Run a Python script\n"
+        "  script list                   Show scripting backend status\n"
+        "  script api                    Print Lua/Python API docs\n"
+        "  script run lua <file|code>    Run a Lua script\n"
+        "  script run python <file|code> Run a Python script\n"
         "  help                          Show this help\n"
         "  quit | q                      Exit NinjaDBG");
 }
@@ -845,13 +969,17 @@ void HeadlessCLI::printTargetInfo() {
 
 // ===== Main loop =====
 
-int HeadlessCLI::run(int argc, char** argv) {
+int HeadlessCLI::run(int argc, char** argv, bool skip_eula) {
     printBanner();
-    if (!showEula()) {
-        err("EULA declined. Exiting.");
-        return 1;
+    if (skip_eula) {
+        eula_accepted_ = true;
+    } else {
+        if (!showEula()) {
+            err("EULA declined. Exiting.");
+            return 1;
+        }
+        eula_accepted_ = true;
     }
-    eula_accepted_ = true;
 
     // Parse CLI args: --cli mode just enters REPL
     bool batch_mode = false;
@@ -861,11 +989,13 @@ int HeadlessCLI::run(int argc, char** argv) {
         if (a == "-c" || a == "--commands") {
             batch_mode = true;
             if (i + 1 < argc) batch_cmds = argv[++i];
+        } else if (a == "--no-eula-check") {
+            // Already handled by skip_eula; ignore here
         } else if (a == "--help" || a == "-h") {
-            std::cout << "Usage: ninjadb --cli [-c \"commands\"]\n"
+            std::cout << "Usage: ninjadb --cli [-c \"commands\"] [--no-eula-check]\n"
                       << "  --cli              Run in headless CLI mode\n"
-                      << "  -c \"commands\"      Execute commands and exit\n"
-                      << "  --no-eula-check    Skip EULA check (use with caution)\n";
+                      << "  -c \"commands\"      Execute commands and exit (separated by ;)\n"
+                      << "  --no-eula-check    Skip EULA acceptance prompt\n";
             return 0;
         }
     }

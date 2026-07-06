@@ -1,0 +1,914 @@
+     1→// NinjaDBG v1.0.5 - HeadlessCLI implementation
+     2→// Closed Source - Free - by Chapzoo
+     3→#include "HeadlessCLI.h"
+     4→#include "WelcomeScreen.h"
+     5→#include "InteractiveMemoryEditor.h"
+     6→#include <iostream>
+     7→#include <fstream>
+     8→#include <sstream>
+     9→#include <cstring>
+    10→#include <cstdlib>
+    11→#include <unistd.h>
+    12→#include <termios.h>
+    13→
+    14→namespace ndbg {
+    15→
+    16→HeadlessCLI::HeadlessCLI() {
+    17→    // Apply default anti-detect mask
+    18→    anti_.enable(AntiDetect::Technique::HWBreakpoints);
+    19→    anti_.enable(AntiDetect::Technique::ProcVmRW);
+    20→    anti_.enable(AntiDetect::Technique::MaskTracerPid);
+    21→    anti_.enable(AntiDetect::Technique::Int3ScanBypass);
+    22→    script_ = std::make_unique<ScriptEngine>(dbg_);
+    23→}
+    24→HeadlessCLI::~HeadlessCLI() {}
+    25→
+    26→void HeadlessCLI::out(const std::string& s) { std::cout << s << std::endl; }
+    27→void HeadlessCLI::err(const std::string& s) { std::cerr << s << std::endl; }
+    28→
+    29→void HeadlessCLI::printBanner() {
+    30→    std::cout <<
+    31→        "\n"
+    32→        "  _   _ _ _   _           _    ___  _____ \n"
+    33→        " | \\ | (_) |_| |__   __ _(_)  / _ \\/ ____|\n"
+    34→        " |  \\| | | __| '_ \\ / _` | | | | | | (___  \n"
+    35→        " | |\\  | | |_| | | | (_| | | | |_| |\\___ \\ \n"
+    36→        " |_| \\_|_|\\__|_| |_|\\__,_|_|  \\___/|____) |\n"
+    37→        "\n"
+    38→        "  v1.0.5 — Stealth Debugger  (Closed Source - Free - by Chapzoo)\n"
+    39→        "  Headless CLI mode. Type 'help' for command list, 'quit' to exit.\n"
+    40→        "  New in v1.0.5: decomp (native C decompilation via RetDec/angr)\n"
+    41→        "\n";
+    42→}
+    43→
+    44→bool HeadlessCLI::showEula() {
+    45→    using namespace ndbg::ui;
+    46→    if (WelcomeScreen::isEulaAccepted()) return true;
+    47→    std::cout << WelcomeScreen::welcomeMessage() << std::endl;
+    48→    std::cout << WelcomeScreen::eulaText() << std::endl;
+    49→    std::cout << "\nDo you accept this EULA? [y/N]: " << std::flush;
+    50→    std::string resp;
+    51→    std::getline(std::cin, resp);
+    52→    if (resp == "y" || resp == "Y" || resp == "yes" || resp == "YES") {
+    53→        WelcomeScreen::acceptEula();
+    54→        std::cout << "EULA accepted. Saved to " << WelcomeScreen::eulaPath() << std::endl;
+    55→        return true;
+    56→    }
+    57→    return false;
+    58→}
+    59→
+    60→void HeadlessCLI::prompt() {
+    61→    std::string p = "(ninjadb) ";
+    62→    if (dbg_.pid() != 0) {
+    63→        p = "(ninjadb:" + std::to_string(dbg_.pid()) + ") ";
+    64→    }
+    65→    std::cout << p << std::flush;
+    66→}
+    67→
+    68→std::string HeadlessCLI::readLine() {
+    69→    std::string s;
+    70→    std::getline(std::cin, s);
+    71→    return s;
+    72→}
+    73→
+    74→void HeadlessCLI::addHistory(const std::string& line) {
+    75→    history_.push_back(line);
+    76→}
+    77→
+    78→addr_t HeadlessCLI::parseAddr(const std::string& s, bool* ok) {
+    79→    if (ok) *ok = true;
+    80→    return (addr_t)strtoull(s.c_str(), nullptr, 0);
+    81→}
+    82→
+    83→std::vector<u8> HeadlessCLI::parseBytes(const std::vector<std::string>& tokens) {
+    84→    std::vector<u8> bytes;
+    85→    for (auto& t : tokens) {
+    86→        u8 b = (u8)strtoul(t.c_str(), nullptr, 0);
+    87→        bytes.push_back(b);
+    88→    }
+    89→    return bytes;
+    90→}
+    91→
+    92→void HeadlessCLI::execute(const std::string& line) {
+    93→    std::istringstream ss(line);
+    94→    std::string cmd;
+    95→    ss >> cmd;
+    96→    if (cmd.empty()) return;
+    97→
+    98→    std::vector<std::string> args;
+    99→    std::string a;
+   100→    while (ss >> a) args.push_back(a);
+   101→
+   102→    if (cmd == "help" || cmd == "h" || cmd == "?")      cmdHelp(args);
+   103→    else if (cmd == "quit" || cmd == "q" || cmd == "exit") cmdQuit(args);
+   104→    else if (cmd == "attach")    cmdAttach(args);
+   105→    else if (cmd == "launch")    cmdLaunch(args);
+   106→    else if (cmd == "detach")    cmdDetach(args);
+   107→    else if (cmd == "kill")      cmdKill(args);
+   108→    else if (cmd == "continue" || cmd == "cont" || cmd == "c") cmdContinue(args);
+   109→    else if (cmd == "step" || cmd == "s" || cmd == "stepi" || cmd == "si") cmdStep(args);
+   110→    else if (cmd == "next" || cmd == "n") cmdNext(args);
+   111→    else if (cmd == "finish" || cmd == "fo") { /* step out */ }
+   112→    else if (cmd == "break" || cmd == "b")  cmdBreak(args, false);
+   113→    else if (cmd == "tbreak" || cmd == "tb") cmdBreak(args, true);
+   114→    else if (cmd == "delete" || cmd == "d")  cmdDelete(args);
+   115→    else if (cmd == "watch") {
+   116→        // watch <addr> [len] [w|rw|x]
+   117→        if (args.size() < 1) { err("usage: watch <addr> [len] [w|rw|x]"); return; }
+   118→        bool ok; addr_t a = parseAddr(args[0], &ok);
+   119→        if (!ok) { err("bad address"); return; }
+   120→        size_t len = args.size() > 1 ? strtoul(args[1].c_str(), nullptr, 0) : 8;
+   121→        DebuggerCore::WatchType wt = DebuggerCore::WatchType::Write;
+   122→        if (args.size() > 2) {
+   123→            if (args[2] == "rw") wt = DebuggerCore::WatchType::ReadWrite;
+   124→            else if (args[2] == "x") wt = DebuggerCore::WatchType::Execute;
+   125→        }
+   126→        int id = dbg_.addWatchpoint(a, len, wt);
+   127→        out("Watchpoint " + std::to_string(id) + " set at " + hex(a));
+   128→    }
+   129→    else if (cmd == "info" || cmd == "i") cmdInfo(args);
+   130→    else if (cmd == "x") cmdExamine(args);
+   131→    else if (cmd == "set") cmdSet(args);
+   132→    else if (cmd == "disas" || cmd == "dis") cmdDisas(args);
+   133→    else if (cmd == "edit")   cmdEdit(args);
+   134→    else if (cmd == "decomp" || cmd == "dec") cmdDecomp(args);
+   135→    else if (cmd == "script") cmdScript(args);
+   136→    else if (cmd == "backtrace" || cmd == "bt") cmdBacktrace(args);
+   137→    else if (cmd == "patch") cmdPatch(args);
+   138→    else if (cmd == "stealth") cmdStealth(args);
+   139→    else if (cmd == "kernel") cmdKernel(args);
+   140→    else if (cmd == "target") cmdTarget(args);
+   141→    else if (cmd == "syscall-step") {
+   142→        int nr; bool entry;
+   143→        if (dbg_.stepToSyscall(nr, entry)) {
+   144→            out(std::string("Syscall ") + (entry ? "entry" : "exit") + " nr=" + std::to_string(nr));
+   145→        } else err("syscall-step failed");
+   146→    }
+   147→    else {
+   148→        err("Unknown command: " + cmd + " (type 'help')");
+   149→    }
+   150→}
+   151→
+   152→// ===== Command handlers =====
+   153→
+   154→void HeadlessCLI::cmdAttach(const std::vector<std::string>& args) {
+   155→    if (args.empty()) { err("usage: attach <pid>"); return; }
+   156→    pid_t p = (pid_t)atoi(args[0].c_str());
+   157→    if (dbg_.attach(p)) {
+   158→        out("Attached to pid " + std::to_string(p));
+   159→        dbg_.readMaps();  // refresh cache
+   160→    } else {
+   161→        err("Attach failed: " + dbg_.lastError());
+   162→    }
+   163→}
+   164→
+   165→void HeadlessCLI::cmdLaunch(const std::vector<std::string>& args) {
+   166→    if (args.empty()) { err("usage: launch <binary> [args...]"); return; }
+   167→    std::vector<std::string> rest(args.begin() + 1, args.end());
+   168→    if (dbg_.attachByLaunch(args[0], rest)) {
+   169→        out("Launched " + args[0] + " (pid " + std::to_string(dbg_.pid()) + ")");
+   170→    } else {
+   171→        err("Launch failed: " + dbg_.lastError());
+   172→    }
+   173→}
+   174→
+   175→void HeadlessCLI::cmdDetach(const std::vector<std::string>&) {
+   176→    if (dbg_.detach()) out("Detached");
+   177→    else err("Detach failed");
+   178→}
+   179→
+   180→void HeadlessCLI::cmdKill(const std::vector<std::string>&) {
+   181→    if (dbg_.kill()) out("Target killed");
+   182→    else err("Kill failed");
+   183→}
+   184→
+   185→void HeadlessCLI::cmdContinue(const std::vector<std::string>&) {
+   186→    if (dbg_.pid() == 0) { err("Not attached"); return; }
+   187→    if (!dbg_.cont()) { err("cont failed"); return; }
+   188→    int sig; bool ex; int code;
+   189→    if (dbg_.waitForStop(sig, ex, code)) {
+   190→        if (ex) out("Target exited with code " + std::to_string(code));
+   191→        else out("Stopped — signal " + std::to_string(sig));
+   192→    }
+   193→}
+   194→
+   195→void HeadlessCLI::cmdStep(const std::vector<std::string>&) {
+   196→    if (dbg_.step()) out("Stepped");
+   197→    else err("Step failed");
+   198→}
+   199→
+   200→void HeadlessCLI::cmdNext(const std::vector<std::string>&) {
+   201→    if (dbg_.stepOver()) out("Stepped over");
+   202→    else err("Step-over failed");
+   203→}
+   204→
+   205→void HeadlessCLI::cmdBreak(const std::vector<std::string>& args, bool temporary) {
+   206→    if (args.empty()) { err("usage: break <addr> [condition]"); return; }
+   207→    bool ok; addr_t a = parseAddr(args[0], &ok);
+   208→    if (!ok) { err("bad address"); return; }
+   209→    int id;
+   210→    std::string cond;
+   211→    if (args.size() > 1) {
+   212→        for (size_t i = 1; i < args.size(); i++) {
+   213→            if (i > 1) cond += " ";
+   214→            cond += args[i];
+   215→        }
+   216→    }
+   217→    if (cond.empty()) {
+   218→        id = temporary ? dbg_.addTempBreakpoint(a) : dbg_.addBreakpoint(a);
+   219→    } else {
+   220→        id = dbg_.addConditionalBreakpoint(a, cond);
+   221→    }
+   222→    if (id < 0) err("set breakpoint failed");
+   223→    else out("Breakpoint " + std::to_string(id) + " set at " + hex(a) +
+   224→             (temporary ? " (temporary)" : "") +
+   225→             (cond.empty() ? "" : " when " + cond));
+   226→}
+   227→
+   228→void HeadlessCLI::cmdDelete(const std::vector<std::string>& args) {
+   229→    if (args.empty()) { err("usage: delete <id>"); return; }
+   230→    int id = atoi(args[0].c_str());
+   231→    if (dbg_.removeBreakpoint(id)) out("Deleted bp " + std::to_string(id));
+   232→    else err("Delete failed");
+   233→}
+   234→
+   235→void HeadlessCLI::cmdInfo(const std::vector<std::string>& args) {
+   236→    if (args.empty()) {
+   237→        out("Usage: info <breakpoints|registers|threads|maps|target>");
+   238→        return;
+   239→    }
+   240→    if (args[0] == "breakpoints" || args[0] == "bp" || args[0] == "b") printBreakpoints();
+   241→    else if (args[0] == "registers" || args[0] == "reg" || args[0] == "r") printRegisters();
+   242→    else if (args[0] == "threads" || args[0] == "t") printThreads();
+   243→    else if (args[0] == "maps" || args[0] == "m") printMaps();
+   244→    else if (args[0] == "target") printTargetInfo();
+   245→    else err("Unknown info subcommand: " + args[0] + " (valid: b|bp|breakpoints|r|reg|registers|t|threads|m|maps|target)");
+   246→}
+   247→
+   248→void HeadlessCLI::cmdExamine(const std::vector<std::string>& args) {
+   249→    // x /Nxb <addr>
+   250→    if (args.size() < 2) { err("usage: x /Nxb <addr>  (or  x /Nxw <addr>)"); return; }
+   251→    std::string fmt = args[0];  // /Nxb or /Nxw
+   252→    bool ok; addr_t a = parseAddr(args[1], &ok);
+   253→    if (!ok) { err("bad address"); return; }
+   254→    // Parse /Nxb or /Nxw
+   255→    int count = 16; int size = 1; bool word = false;
+   256→    if (fmt.size() > 1 && fmt[0] == '/') {
+   257→        // Find x
+   258→        size_t xpos = fmt.find('x');
+   259→        if (xpos != std::string::npos) {
+   260→            count = atoi(fmt.substr(1, xpos - 1).c_str());
+   261→            if (count <= 0) count = 16;
+   262→            if (xpos + 1 < fmt.size()) {
+   263→                char c = fmt[xpos + 1];
+   264→                if (c == 'w') { size = 4; word = true; }
+   265→                else if (c == 'g') { size = 8; word = true; }
+   266→                else if (c == 'h') { size = 2; word = true; }
+   267→            }
+   268→        }
+   269→    }
+   270→    auto bytes = dbg_.readMemoryVec(a, count * size);
+   271→    if (bytes.empty()) { err("read failed"); return; }
+   272→    for (int i = 0; i < count; i++) {
+   273→        if (i % 16 == 0) {
+   274→            if (i > 0) std::cout << "\n";
+   275→            std::cout << hex(a + i * size) << ": ";
+   276→        }
+   277→        if (word) {
+   278→            u64 v = 0;
+   279→            std::memcpy(&v, bytes.data() + i * size, size);
+   280→            std::cout << hex(v, size * 2) << " ";
+   281→        } else {
+   282→            std::cout << hex2(bytes[i], 2) << " ";
+   283→        }
+   284→    }
+   285→    std::cout << std::endl;
+   286→}
+   287→
+   288→void HeadlessCLI::cmdSet(const std::vector<std::string>& args) {
+   289→    // set <addr> = <bytes>
+   290→    if (args.size() < 3 || args[1] != "=") {
+   291→        err("usage: set <addr> = <byte1> <byte2> ...");
+   292→        return;
+   293→    }
+   294→    bool ok; addr_t a = parseAddr(args[0], &ok);
+   295→    if (!ok) { err("bad address"); return; }
+   296→    std::vector<std::string> btokens(args.begin() + 2, args.end());
+   297→    auto bytes = parseBytes(btokens);
+   298→    if (dbg_.writeMemory(a, bytes.data(), bytes.size())) {
+   299→        out("Wrote " + std::to_string(bytes.size()) + " bytes at " + hex(a));
+   300→    } else err("write failed");
+   301→}
+   302→
+   303→void HeadlessCLI::cmdDisas(const std::vector<std::string>& args) {
+   304→    if (dbg_.pid() == 0) { err("Not attached. Use 'attach <pid>' first."); return; }
+   305→    addr_t addr = 0;
+   306→    size_t count = 20;
+   307→    // If no args, default to current RIP
+   308→    if (args.empty()) {
+   309→        RegisterSet r;
+   310→        if (!dbg_.readRegisters(r)) { err("readRegisters failed"); return; }
+   311→        addr = r.rip;
+   312→    } else {
+   313→        bool ok; addr = parseAddr(args[0], &ok);
+   314→        if (!ok) { err("bad address"); return; }
+   315→        if (args.size() > 1) count = (size_t)strtoul(args[1].c_str(), nullptr, 0);
+   316→    }
+   317→    // Read enough bytes
+   318→    auto bytes = dbg_.readMemoryVec(addr, count * 15 + 32);
+   319→    if (bytes.empty()) { err("readMemory failed at " + hex(addr)); return; }
+   320→    auto instrs = disas_.disassemble(addr, bytes.data(), bytes.size(), count);
+   321→    if (instrs.empty()) { err("no instructions decoded"); return; }
+   322→    // Header
+   323→    std::cout << "ADDRESS             BYTES               MNEMONIC OPERANDS\n";
+   324→    std::cout << "------------------- ------------------- ------------------------------\n";
+   325→    RegisterSet regs;
+   326→    bool have_regs = dbg_.readRegisters(regs);
+   327→    for (auto& ins : instrs) {
+   328→        bool at_rip = have_regs && (ins.address == regs.rip);
+   329→        std::string line = Disassembler::format(ins, true);
+   330→        // Annotate with symbol if it's a call/jmp
+   331→        if (ins.has_branch_target && ins.branch_target != 0) {
+   332→            std::string sym = resolveSymbol(ins.branch_target);
+   333→            if (!sym.empty()) {
+   334→                line += "  ; " + sym;
+   335→            }
+   336→        }
+   337→        if (at_rip) {
+   338→            std::cout << "\x1b[33m>> " << line << "\x1b[0m\n";  // yellow highlight
+   339→        } else {
+   340→            std::cout << "   " << line << "\n";
+   341→        }
+   342→    }
+   343→}
+   344→
+   345→void HeadlessCLI::cmdEdit(const std::vector<std::string>& args) {
+   346→    if (dbg_.pid() == 0) { err("Not attached. Use 'attach <pid>' first."); return; }
+   347→    addr_t addr = 0;
+   348→    if (args.empty()) {
+   349→        RegisterSet r;
+   350→        if (!dbg_.readRegisters(r)) { err("readRegisters failed"); return; }
+   351→        addr = r.rip;
+   352→    } else {
+   353→        bool ok; addr = parseAddr(args[0], &ok);
+   354→        if (!ok) { err("bad address"); return; }
+   355→    }
+   356→    out("Launching interactive memory editor at " + hex(addr) + "  (press 'q' to exit, 'h' for help)");
+   357→    // Create the editor and run it
+   358→    editor_ = std::make_unique<InteractiveMemoryEditor>(dbg_);
+   359→    editor_->run(addr, InteractiveMemoryEditor::Mode::Hex);
+   360→    editor_.reset();
+   361→    out("Returned from editor.");
+   362→}
+   363→
+   364→void HeadlessCLI::cmdDecomp(const std::vector<std::string>& args) {
+   365→    if (args.empty()) {
+   366→        // No args: decompile function at current RIP (live process)
+   367→        if (dbg_.pid() == 0) { printDecompStatus(); return; }
+   368→        RegisterSet r;
+   369→        if (!dbg_.readRegisters(r)) { err("readRegisters failed"); return; }
+   370→        out("Decompiling function at current RIP = " + hex(r.rip) + " ...");
+   371→        auto res = decompiler_.decompileFunction(dbg_, r.rip, 0x1000);
+   372→        if (!res.ok) {
+   373→            err("Decompile failed: " + res.error);
+   374→            if (res.error.find("not available") != std::string::npos ||
+   375→                res.error.find("No decompiler") != std::string::npos) {
+   376→                err("Run 'decomp list' to see backend status, or 'decomp api' for install hints.");
+   377→            }
+   378→            return;
+   379→        }
+   380→        out("Backend: " + res.backend_used + "  Elapsed: " + std::to_string((int)res.elapsed_ms) + " ms");
+   381→        out("Function: " + res.function_name);
+   382→        std::cout << "\n" << res.c_code << std::endl;
+   383→        return;
+   384→    }
+   385→    std::string sub = args[0];
+   386→
+   387→    // decomp list
+   388→    if (sub == "list") {
+   389→        printDecompStatus();
+   390→        return;
+   391→    }
+   392→    // decomp api
+   393→    if (sub == "api") {
+   394→        std::cout << Decompiler::apiDocs() << std::endl;
+   395→        return;
+   396→    }
+   397→    // decomp set <backend>
+   398→    if (sub == "set") {
+   399→        if (args.size() < 2) { err("usage: decomp set <retdec-native|retdec-subprocess|angr|auto>"); return; }
+   400→        std::string b = args[1];
+   401→        if (b == "auto")              decompiler_.setBackend(Decompiler::Backend::Auto);
+   402→        else if (b == "retdec-native")decompiler_.setBackend(Decompiler::Backend::RetDecNative);
+   403→        else if (b == "retdec-subprocess") decompiler_.setBackend(Decompiler::Backend::RetDecSubprocess);
+   404→        else if (b == "retdec")       decompiler_.setBackend(Decompiler::Backend::RetDecNative);
+   405→        else if (b == "angr")         decompiler_.setBackend(Decompiler::Backend::Angr);
+   406→        else { err("unknown backend: " + b); return; }
+   407→        out("Decompiler backend set to: " + b);
+   408→        return;
+   409→    }
+   410→    // decomp file <binary> [addr]
+   411→    if (sub == "file") {
+   412→        if (args.size() < 2) {
+   413→            err("usage: decomp file <binary> [addr]");
+   414→            return;
+   415→        }
+   416→        std::string bin = args[1];
+   417→        if (args.size() >= 3) {
+   418→            // Decompile one function in a file
+   419→            bool ok; addr_t a = parseAddr(args[2], &ok);
+   420→            if (!ok) { err("bad address: " + args[2]); return; }
+   421→            out("Decompiling function at " + hex(a) + " in " + bin + " ...");
+   422→            auto r = decompiler_.decompileFunctionInFile(bin, a);
+   423→            if (!r.ok) { err("Decompile failed: " + r.error); return; }
+   424→            out("Backend: " + r.backend_used + "  Elapsed: " + std::to_string((int)r.elapsed_ms) + " ms");
+   425→            out("Function: " + r.function_name);
+   426→            std::cout << "\n" << r.c_code << std::endl;
+   427→        } else {
+   428→            // Decompile whole file
+   429→            out("Decompiling entire file: " + bin + " ...");
+   430→            auto r = decompiler_.decompileFile(bin);
+   431→            if (!r.ok) { err("Decompile failed: " + r.error); return; }
+   432→            out("Backend: " + r.backend_used + "  Elapsed: " + std::to_string((int)r.elapsed_ms) + " ms");
+   433→            std::cout << "\n" << r.c_code << std::endl;
+   434→        }
+   435→        return;
+   436→    }
+   437→
+   438→    // decomp <addr> [max_bytes]  - decompile function in live process
+   439→    bool ok; addr_t addr = parseAddr(sub, &ok);
+   440→    if (!ok) { err("unknown decomp subcommand: " + sub + "\n  usage: decomp [addr|file|list|api|set]"); return; }
+   441→    if (dbg_.pid() == 0) { err("Not attached. Use 'attach <pid>' first."); return; }
+   442→    size_t max_bytes = 0x1000;
+   443→    if (args.size() > 1) {
+   444→        max_bytes = (size_t)strtoull(args[1].c_str(), nullptr, 0);
+   445→        if (max_bytes == 0) max_bytes = 0x1000;
+   446→    }
+   447→    out("Decompiling function at " + hex(addr) + " (max " + std::to_string(max_bytes) + " bytes) ...");
+   448→    auto r = decompiler_.decompileFunction(dbg_, addr, max_bytes);
+   449→    if (!r.ok) {
+   450→        err("Decompile failed: " + r.error);
+   451→        if (r.error.find("not available") != std::string::npos ||
+   452→            r.error.find("No decompiler") != std::string::npos) {
+   453→            err("Run 'decomp list' to see backend status, or 'decomp api' for install hints.");
+   454→        }
+   455→        return;
+   456→    }
+   457→    out("Backend: " + r.backend_used + "  Elapsed: " + std::to_string((int)r.elapsed_ms) + " ms");
+   458→    out("Function: " + r.function_name);
+   459→    std::cout << "\n" << r.c_code << std::endl;
+   460→}
+   461→
+   462→void HeadlessCLI::printDecompStatus() {
+   463→    out("Decompiler backend status:");
+   464→    out(std::string("  retdec-native:     ") +
+   465→        (decompiler_.isRetDecNativeAvailable() ? "[AVAILABLE]" : "[NOT INSTALLED]"));
+   466→    out(std::string("  retdec-subprocess: ") +
+   467→        (decompiler_.isRetDecSubprocessAvailable() ? "[AVAILABLE]" : "[NOT INSTALLED]"));
+   468→    out(std::string("  angr:              ") +
+   469→        (decompiler_.isAngrAvailable() ? "[AVAILABLE]" : "[NOT INSTALLED]"));
+   470→    auto avail = decompiler_.detectAvailable();
+   471→    out(std::string("  current selection: ") + Decompiler::backendName(decompiler_.currentBackend()) +
+   472→        "  (auto-detected: " + Decompiler::backendName(avail) + ")");
+   473→    out("");
+   474→    out("Available commands:");
+   475→    out("  decomp <addr>                Decompile function at addr (live process)");
+   476→    out("  decomp <addr> <max_bytes>    Limit input size (default 4096)");
+   477→    out("  decomp file <binary>         Decompile whole binary file");
+   478→    out("  decomp file <binary> <addr>  Decompile one function in a file");
+   479→    out("  decomp list                  Show this status");
+   480→    out("  decomp api                   Show install hints + API docs");
+   481→    out("  decomp set <backend>         Force backend (auto/retdec-native/retdec-subprocess/angr)");
+   482→}
+   483→
+   484→void HeadlessCLI::cmdScript(const std::vector<std::string>& args) {
+   485→    if (args.empty()) { printScriptStatus(); return; }
+   486→    std::string sub = args[0];
+   487→    if (sub == "list") {
+   488→        printScriptStatus();
+   489→    } else if (sub == "api") {
+   490→        std::cout << ScriptEngine::apiDocs() << std::endl;
+   491→    } else if (sub == "run") {
+   492→        if (args.size() < 3) {
+   493→            err("usage: script run <lua|python> <file-or-code>");
+   494→            err("  If the third arg starts with a path separator or ./, treat");
+   495→            err("  as a file. Otherwise treat as inline code.");
+   496→            return;
+   497→        }
+   498→        std::string lang_str = args[1];
+   499→        std::string payload = args[2];
+   500→        ScriptEngine::Lang lang;
+   501→        if (lang_str == "lua" || lang_str == "Lua") lang = ScriptEngine::Lang::Lua;
+   502→        else if (lang_str == "python" || lang_str == "py" || lang_str == "Python") lang = ScriptEngine::Lang::Python;
+   503→        else { err("Unknown language: " + lang_str + " (use 'lua' or 'python')"); return; }
+   504→
+   505→        if (!script_->isAvailable(lang)) {
+   506→            err(script_->installHint(lang));
+   507→            return;
+   508→        }
+   509→
+   510→        // If payload looks like a file path that exists, read it; else treat as code
+   511→        std::string code;
+   512→        std::ifstream f(payload);
+   513→        if (f) {
+   514→            std::stringstream ss; ss << f.rdbuf();
+   515→            code = ss.str();
+   516→            out("Running " + lang_str + " script: " + payload);
+   517→        } else {
+   518→            code = payload;
+   519→            out("Running inline " + lang_str + " code");
+   520→        }
+   521→
+   522→        std::string err_str;
+   523→        if (script_->runString(lang, code, err_str)) {
+   524→            out("Script completed.");
+   525→        } else {
+   526→            err("Script error: " + err_str);
+   527→        }
+   528→    } else {
+   529→        err("usage: script <list|run|api>");
+   530→    }
+   531→}
+   532→
+   533→std::string HeadlessCLI::resolveSymbol(addr_t a) {
+   534→    auto maps = dbg_.readMaps();
+   535→    for (auto& m : maps) {
+   536→        if (a >= m.start && a < m.end) {
+   537→            size_t slash = m.path.rfind('/');
+   538→            std::string bn = (slash != std::string::npos) ? m.path.substr(slash + 1) : m.path;
+   539→            return "<" + bn + "+0x" + hex2(a - m.start, 0) + ">";
+   540→        }
+   541→    }
+   542→    return "";
+   543→}
+   544→
+   545→void HeadlessCLI::printScriptStatus() {
+   546→    out("Scripting backends:");
+   547→    out(std::string("  Lua:    ") + (script_->isAvailable(ScriptEngine::Lang::Lua) ? "[AVAILABLE]" : "[NOT INSTALLED]"));
+   548→    out(std::string("  Python: ") + (script_->isAvailable(ScriptEngine::Lang::Python) ? "[AVAILABLE]" : "[NOT INSTALLED]"));
+   549→    out("");
+   550→    out("Available commands:");
+   551→    out("  script list                Show this status");
+   552→    out("  script api                 Print API documentation");
+   553→    out("  script run lua <file>      Run a Lua script");
+   554→    out("  script run python <file>   Run a Python script");
+   555→    out("  script run lua \"code\"      Run inline Lua code");
+   556→    out("  script run python \"code\"  Run inline Python code");
+   557→}
+   558→
+   559→void HeadlessCLI::cmdBacktrace(const std::vector<std::string>&) {
+   560→    printBacktrace();
+   561→}
+   562→
+   563→void HeadlessCLI::cmdPatch(const std::vector<std::string>& args) {
+   564→    if (args.empty()) { err("usage: patch <list|apply|nop|save|undo|info>"); return; }
+   565→    std::string sub = args[0];
+   566→    if (sub == "list") {
+   567→        printPatchList();
+   568→    } else if (sub == "info") {
+   569→        if (!patcher_.isLoaded()) { err("No target loaded. Use 'target <binary>'"); return; }
+   570→        out("Target: " + patcher_.formatName());
+   571→        out("Image size: " + std::to_string(patcher_.imageSize()) + " bytes");
+   572→        out("Entry point: " + hex(patcher_.entryPoint()));
+   573→        out("Sections: " + std::to_string(patcher_.sections().size()));
+   574→    } else if (sub == "nop") {
+   575→        if (args.size() < 3) { err("usage: patch nop <offset> <length>"); return; }
+   576→        u64 off = strtoull(args[1].c_str(), nullptr, 0);
+   577→        size_t len = strtoul(args[2].c_str(), nullptr, 0);
+   578→        int id = patcher_.nopRange(off, len);
+   579→        if (id < 0) err("patch failed: " + patcher_.lastError());
+   580→        else out("Patch " + std::to_string(id) + ": NOPed " + std::to_string(len) + " bytes at " + hex(off));
+   581→    } else if (sub == "apply") {
+   582→        if (args.size() < 3) { err("usage: patch apply <offset> <kind> [bytes...]"); return; }
+   583→        u64 off = strtoull(args[1].c_str(), nullptr, 0);
+   584→        std::string kind = args[2];
+   585→        BinaryPatcher::PatchKind k = BinaryPatcher::PatchKind::CustomBytes;
+   586→        if (kind == "nop") k = BinaryPatcher::PatchKind::NOP;
+   587→        else if (kind == "jmp") k = BinaryPatcher::PatchKind::JmpAlways;
+   588→        else if (kind == "nojmp") k = BinaryPatcher::PatchKind::JmpNever;
+   589→        else if (kind == "callnop") k = BinaryPatcher::PatchKind::CallToNop;
+   590→        else if (kind == "rettrue") k = BinaryPatcher::PatchKind::RetTrue;
+   591→        else if (kind == "ascii") k = BinaryPatcher::PatchKind::AsciiReplace;
+   592→        size_t len = args.size() > 3 ? args.size() - 3 : 1;
+   593→        std::vector<u8> bytes;
+   594→        if (args.size() > 3) {
+   595→            std::vector<std::string> btokens(args.begin() + 3, args.end());
+   596→            bytes = parseBytes(btokens);
+   597→            len = bytes.size();
+   598→        }
+   599→        int id = patcher_.applyPatch(off, k, len, bytes);
+   600→        if (id < 0) err("patch failed: " + patcher_.lastError());
+   601→        else out("Patch " + std::to_string(id) + " applied at " + hex(off));
+   602→    } else if (sub == "save") {
+   603→        if (args.size() < 2) { err("usage: patch save <outfile>"); return; }
+   604→        if (patcher_.save(args[1])) out("Saved patched binary to " + args[1]);
+   605→        else err("save failed: " + patcher_.lastError());
+   606→    } else if (sub == "undo") {
+   607→        // patch undo [id]  — if no id, undo the last applied patch
+   608→        if (args.size() < 2) {
+   609→            // Undo the last patch
+   610→            auto& patches = patcher_.patches();
+   611→            if (patches.empty()) { err("No patches to undo"); return; }
+   612→            int last = (int)patches.size() - 1;
+   613→            if (patcher_.undoPatch(last)) out("Undone patch " + std::to_string(last) + " (last)");
+   614→            else err("undo failed");
+   615→            return;
+   616→        }
+   617→        int id = atoi(args[1].c_str());
+   618→        if (id < 0 || id >= (int)patcher_.patches().size()) {
+   619→            err("Invalid patch id " + std::to_string(id) + " — valid range: 0.." +
+   620→                std::to_string(patcher_.patches().size() - 1) + " (use 'patch list' to see IDs)");
+   621→            return;
+   622→        }
+   623→        if (patcher_.undoPatch(id)) out("Undone patch " + std::to_string(id));
+   624→        else err("undo failed");
+   625→    } else {
+   626→        err("Unknown patch subcommand: " + sub);
+   627→    }
+   628→}
+   629→
+   630→void HeadlessCLI::cmdStealth(const std::vector<std::string>& args) {
+   631→    if (args.empty()) { printStealthStatus(); return; }
+   632→    std::string sub = args[0];
+   633→    if (sub == "list") {
+   634→        printStealthStatus();
+   635→    } else if (sub == "on" || sub == "off") {
+   636→        if (args.size() < 2) { err("usage: stealth on|off <name>"); return; }
+   637→        std::string nm = args[1];
+   638→        for (auto t : AntiDetect::allTechniques()) {
+   639→            std::string tn = AntiDetect::name(t);
+   640→            // case-insensitive substring match
+   641→            std::string lower_tn = tn, lower_nm = nm;
+   642→            for (auto& c : lower_tn) c = tolower(c);
+   643→            for (auto& c : lower_nm) c = tolower(c);
+   644→            if (lower_tn.find(lower_nm) != std::string::npos) {
+   645→                if (sub == "on") anti_.enable(t);
+   646→                else anti_.disable(t);
+   647→                out("Stealth: " + tn + " = " + (sub == "on" ? "ON" : "OFF"));
+   648→                return;
+   649→            }
+   650→        }
+   651→        err("No stealth technique matching '" + nm + "'");
+   652→    } else {
+   653→        err("usage: stealth [list|on <name>|off <name>]");
+   654→    }
+   655→}
+   656→
+   657→void HeadlessCLI::cmdKernel(const std::vector<std::string>& args) {
+   658→    if (args.empty()) { printKernelStatus(); return; }
+   659→    std::string sub = args[0];
+   660→    if (sub == "status") printKernelStatus();
+   661→    else if (sub == "load") {
+   662→        out("Building kernel module...");
+   663→        std::string path = kernel_.buildKernelModule();
+   664→        if (path.empty()) {
+   665→            err("Build failed. Install kernel headers: sudo apt-get install linux-headers-$(uname -r)");
+   666→        } else {
+   667→            out("Module built: " + path);
+   668→            out("Loading (requires root)...");
+   669→            if (kernel_.loadModule()) out("Module loaded. /proc/ninja_stealth available.");
+   670→            else err("Load failed. Try: sudo insmod " + path);
+   671→        }
+   672→    } else if (sub == "unload") {
+   673→        if (kernel_.unloadModule()) out("Module unloaded");
+   674→        else err("Unload failed");
+   675→    } else {
+   676→        err("usage: kernel [status|load|unload]");
+   677→    }
+   678→}
+   679→
+   680→void HeadlessCLI::cmdTarget(const std::vector<std::string>& args) {
+   681→    if (args.empty()) { err("usage: target <binary>"); return; }
+   682→    if (patcher_.load(args[0])) {
+   683→        out("Loaded: " + args[0]);
+   684→        out("Format: " + patcher_.formatName());
+   685→        out("Size: " + std::to_string(patcher_.imageSize()) + " bytes");
+   686→        out("Entry: " + hex(patcher_.entryPoint()));
+   687→        out("Sections: " + std::to_string(patcher_.sections().size()));
+   688→    } else err("load failed: " + patcher_.lastError());
+   689→}
+   690→
+   691→void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
+   692→    out("NinjaDBG v1.0.5 CLI commands:\n"
+   693→        "  attach <pid>                  Attach to a running process\n"
+   694→        "  launch <bin> [args...]        Launch a new process under the debugger\n"
+   695→        "  detach                        Detach from the target\n"
+   696→        "  kill                          Kill the target process\n"
+   697→        "  continue | c                  Continue execution\n"
+   698→        "  step | s                      Single-step one instruction\n"
+   699→        "  next | n                      Step over (skip CALL)\n"
+   700→        "  syscall-step                  Run until next syscall entry/exit\n"
+   701→        "  break <addr> [cond]           Set a breakpoint (optionally conditional)\n"
+   702→        "  tbreak <addr>                 Set a temporary breakpoint\n"
+   703→        "  watch <addr> [len] [w|rw|x]   Set a watchpoint\n"
+   704→        "  delete <id>                   Delete a breakpoint/watchpoint\n"
+   705→        "  info <b|r|t|m|target>         Show breakpoints/registers/threads/maps/target\n"
+   706→        "  x /Nxb <addr>                 Examine N bytes in hex\n"
+   707→        "  x /Nxw <addr>                 Examine N words\n"
+   708→        "  set <addr> = <byte>...        Write bytes to memory\n"
+   709→        "  disas [addr] [count]          [v1.0.5] Full x86-64 disassembly\n"
+   710→        "  edit [addr]                   [v1.0.5] Interactive TUI memory editor\n"
+   711→        "  decomp [addr] [max_bytes]     [v1.0.5] Native C decompilation via RetDec/angr\n"
+   712→        "  decomp file <bin> [addr]      [v1.0.5] Decompile whole file or one function\n"
+   713→        "  decomp <list|api|set>         [v1.0.5] Backend management\n"
+   714→        "  bt | backtrace                Show call stack\n"
+   715→        "  target <binary>               Load a binary for static patching\n"
+   716→        "  patch list                    List applied patches\n"
+   717→        "  patch nop <off> <len>         NOP a byte range\n"
+   718→        "  patch apply <off> <kind> [b]  Apply a patch (nop/jmp/nojmp/callnop/rettrue/ascii)\n"
+   719→        "  patch save <outfile>          Save patched binary\n"
+   720→        "  patch undo <id>               Undo a patch\n"
+   721→        "  stealth list                  List anti-detect techniques\n"
+   722→        "  stealth on|off <name>         Enable/disable a technique\n"
+   723→        "  kernel status                 Show kernel module status\n"
+   724→        "  kernel load                   Build + load the stealth LKM\n"
+   725→        "  kernel unload                 Unload the LKM\n"
+   726→        "  script list                   [v1.0.5] Show scripting backend status\n"
+   727→        "  script api                    [v1.0.5] Print Lua/Python API docs\n"
+   728→        "  script run lua <file|code>    [v1.0.5] Run a Lua script\n"
+   729→        "  script run python <file|code> [v1.0.5] Run a Python script\n"
+   730→        "  help                          Show this help\n"
+   731→        "  quit | q                      Exit NinjaDBG");
+   732→}
+   733→
+   734→void HeadlessCLI::cmdQuit(const std::vector<std::string>&) {
+   735→    if (dbg_.pid() != 0) {
+   736→        out("Detaching before quit...");
+   737→        dbg_.detach();
+   738→    }
+   739→    running_ = false;
+   740→}
+   741→
+   742→// ===== Print helpers =====
+   743→
+   744→void HeadlessCLI::printRegisters() {
+   745→    if (dbg_.pid() == 0) { err("Not attached"); return; }
+   746→    RegisterSet r;
+   747→    if (!dbg_.readRegisters(r)) { err("read registers failed"); return; }
+   748→    u64* vals[] = {&r.rax,&r.rbx,&r.rcx,&r.rdx,&r.rsi,&r.rdi,&r.rbp,&r.rsp,
+   749→                   &r.r8,&r.r9,&r.r10,&r.r11,&r.r12,&r.r13,&r.r14,&r.r15,
+   750→                   &r.rip,&r.rflags};
+   751→    for (int i = 0; i < 18; i++) {
+   752→        std::cout << kRegNames[i] << " = " << hex(*vals[i]) << "   ";
+   753→        if (i % 4 == 3) std::cout << "\n";
+   754→    }
+   755→    std::cout << std::endl;
+   756→}
+   757→
+   758→void HeadlessCLI::printBreakpoints() {
+   759→    auto bps = dbg_.breakpoints();
+   760→    if (bps.empty()) { out("No breakpoints."); return; }
+   761→    out("ID  ADDR              TYPE  HITS  COND");
+   762→    for (auto& b : bps) {
+   763→        std::cout << std::left << std::setw(4) << b.id << " "
+   764→                  << hex(b.address) << "  "
+   765→                  << (b.is_watchpoint ? "WP" : (b.hardware ? "HW" : "SW")) << "   "
+   766→                  << std::setw(4) << b.hit_count << "  "
+   767→                  << (b.condition.empty() ? "-" : b.condition)
+   768→                  << (b.temporary ? " (temp)" : "")
+   769→                  << std::endl;
+   770→    }
+   771→}
+   772→
+   773→void HeadlessCLI::printThreads() {
+   774→    if (dbg_.pid() == 0) { err("Not attached"); return; }
+   775→    auto ts = dbg_.readThreads();
+   776→    out("TID         STATE  NAME");
+   777→    for (auto& t : ts) {
+   778→        std::cout << std::left << std::setw(11) << t.tid << " "
+   779→                  << std::setw(6) << t.state << "  " << t.name << std::endl;
+   780→    }
+   781→}
+   782→
+   783→void HeadlessCLI::printMaps() {
+   784→    if (dbg_.pid() == 0) { err("Not attached"); return; }
+   785→    auto ms = dbg_.readMaps();
+   786→    out("START              END                PERMS  PATH");
+   787→    for (auto& m : ms) {
+   788→        std::cout << hex(m.start) << "  " << hex(m.end) << "  "
+   789→                  << (m.read ? "r" : "-") << (m.write ? "w" : "-")
+   790→                  << (m.exec ? "x" : "-") << (m.shared ? "s" : "p") << "   "
+   791→                  << m.path << std::endl;
+   792→    }
+   793→}
+   794→
+   795→void HeadlessCLI::printBacktrace() {
+   796→    if (dbg_.pid() == 0) { err("Not attached"); return; }
+   797→    auto frames = dbg_.backtrace();
+   798→    out("#  RIP               SYMBOL");
+   799→    for (size_t i = 0; i < frames.size(); i++) {
+   800→        std::cout << "#" << i << " " << hex(frames[i].rip) << "  "
+   801→                  << (frames[i].symbol.empty() ? "?" : frames[i].symbol) << std::endl;
+   802→    }
+   803→}
+   804→
+   805→void HeadlessCLI::printPatchList() {
+   806→    if (!patcher_.isLoaded()) { err("No target loaded"); return; }
+   807→    auto& patches = patcher_.patches();
+   808→    if (patches.empty()) { out("No patches applied."); return; }
+   809→    out("ID  OFFSET            LEN  KIND");
+   810→    for (size_t i = 0; i < patches.size(); i++) {
+   811→        std::cout << std::left << std::setw(4) << i << " "
+   812→                  << hex(patches[i].file_offset, 8) << "       "
+   813→                  << std::setw(4) << patches[i].length << "  ";
+   814→        switch (patches[i].kind) {
+   815→            case BinaryPatcher::PatchKind::NOP:         std::cout << "NOP"; break;
+   816→            case BinaryPatcher::PatchKind::CustomBytes: std::cout << "BYTES"; break;
+   817→            case BinaryPatcher::PatchKind::JmpAlways:   std::cout << "JMP"; break;
+   818→            case BinaryPatcher::PatchKind::JmpNever:    std::cout << "NOJMP"; break;
+   819→            case BinaryPatcher::PatchKind::CallToNop:   std::cout << "CALLNOP"; break;
+   820→            case BinaryPatcher::PatchKind::RetTrue:     std::cout << "RETTRUE"; break;
+   821→            case BinaryPatcher::PatchKind::AsciiReplace:std::cout << "ASCII"; break;
+   822→        }
+   823→        std::cout << "  " << patches[i].note << std::endl;
+   824→    }
+   825→}
+   826→
+   827→void HeadlessCLI::printStealthStatus() {
+   828→    out("Anti-detect techniques (userland):");
+   829→    for (auto t : AntiDetect::allTechniques()) {
+   830→        std::cout << "  [" << (anti_.isEnabled(t) ? "x" : " ") << "] "
+   831→                  << AntiDetect::name(t) << std::endl;
+   832→    }
+   833→}
+   834→
+   835→void HeadlessCLI::printKernelStatus() {
+   836→    out("Kernel stealth: " + kernel_.moduleStatus());
+   837→    out("Techniques (require loaded LKM):");
+   838→    for (auto t : KernelStealth::allTechniques()) {
+   839→        std::cout << "  [" << (kernel_.isEnabled(t) ? "x" : " ") << "] "
+   840→                  << KernelStealth::name(t) << std::endl;
+   841→    }
+   842→}
+   843→
+   844→void HeadlessCLI::printTargetInfo() {
+   845→    if (!patcher_.isLoaded()) { out("No target loaded"); return; }
+   846→    out("Format: " + patcher_.formatName());
+   847→    out("Size:   " + std::to_string(patcher_.imageSize()) + " bytes");
+   848→    out("Entry:  " + hex(patcher_.entryPoint()));
+   849→    out("Sections:");
+   850→    for (auto& s : patcher_.sections()) {
+   851→        std::cout << "  " << std::left << std::setw(20) << s.name
+   852→                  << " off=" << hex(s.file_offset, 8)
+   853→                  << " vaddr=" << hex(s.vaddr)
+   854→                  << " size=" << hex(s.size, 8)
+   855→                  << " " << (s.exec ? "x" : "-") << (s.write ? "w" : "-") << (s.read ? "r" : "-")
+   856→                  << std::endl;
+   857→    }
+   858→}
+   859→
+   860→// ===== Main loop =====
+   861→
+   862→int HeadlessCLI::run(int argc, char** argv, bool skip_eula) {
+   863→    printBanner();
+   864→    if (skip_eula) {
+   865→        eula_accepted_ = true;
+   866→    } else {
+   867→        if (!showEula()) {
+   868→            err("EULA declined. Exiting.");
+   869→            return 1;
+   870→        }
+   871→        eula_accepted_ = true;
+   872→    }
+   873→
+   874→    // Parse CLI args: --cli mode just enters REPL
+   875→    bool batch_mode = false;
+   876→    std::string batch_cmds;
+   877→    for (int i = 1; i < argc; i++) {
+   878→        std::string a = argv[i];
+   879→        if (a == "-c" || a == "--commands") {
+   880→            batch_mode = true;
+   881→            if (i + 1 < argc) batch_cmds = argv[++i];
+   882→        } else if (a == "--no-eula-check") {
+   883→            // Already handled by skip_eula; ignore here
+   884→        } else if (a == "--help" || a == "-h") {
+   885→            std::cout << "Usage: ninjadb --cli [-c \"commands\"] [--no-eula-check]\n"
+   886→                      << "  --cli              Run in headless CLI mode\n"
+   887→                      << "  -c \"commands\"      Execute commands and exit (separated by ;)\n"
+   888→                      << "  --no-eula-check    Skip EULA acceptance prompt\n";
+   889→            return 0;
+   890→        }
+   891→    }
+   892→
+   893→    if (batch_mode) {
+   894→        std::istringstream ss(batch_cmds);
+   895→        std::string line;
+   896→        while (std::getline(ss, line, ';')) {
+   897→            if (!line.empty()) execute(line);
+   898→        }
+   899→        return 0;
+   900→    }
+   901→
+   902→    while (running_) {
+   903→        prompt();
+   904→        std::string line = readLine();
+   905→        if (line == "EOF") break;
+   906→        if (std::cin.eof()) break;
+   907→        if (line.empty()) continue;
+   908→        execute(line);
+   909→    }
+   910→    return 0;
+   911→}
+   912→
+   913→} // namespace ndbg
+   914→

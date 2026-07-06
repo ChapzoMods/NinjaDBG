@@ -1,5 +1,5 @@
-// NinjaDBG v1.0.5 - Disassembler implementation
-// Closed Source - Free - by Chapzoo
+// NinjaDBG v1.1.0 - Disassembler implementation
+// Open Source (MIT) - by Chapzoo
 #include "Disassembler.h"
 #include <cstring>
 #include <cstdio>
@@ -180,8 +180,15 @@ std::string Disassembler::formatModRM(State& s, int operand_size) {
     // memory operand
     std::string m = "[";
     if (s.seg_override) {
-        const char* segs[] = {"","","es:","cs:","ss:","ds:","fs:","gs:"};
-        m += segs[s.seg_override >> 3];
+        switch (s.seg_override) {
+            case 0x2E: m += "cs:"; break;
+            case 0x36: m += "ss:"; break;
+            case 0x3E: m += "ds:"; break;
+            case 0x26: m += "es:"; break;
+            case 0x64: m += "fs:"; break;
+            case 0x65: m += "gs:"; break;
+            default: break;
+        }
     }
 
     if (rm == 4 && s.has_sib) {

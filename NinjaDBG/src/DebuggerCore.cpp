@@ -1,5 +1,5 @@
 // NinjaDBG v1.0.2 - DebuggerCore implementation
-// Closed Source - Free - by Chapzoo
+// Open Source (MIT) - by Chapzoo
 #include "DebuggerCore.h"
 #include "AntiDetect.h"
 #include <sys/ptrace.h>
@@ -40,6 +40,8 @@ bool DebuggerCore::attach(pid_t pid) {
     int status;
     if (waitpid(pid, &status, 0) == -1) {
         last_error_ = "waitpid failed";
+        // Detach to avoid leaking the tracee
+        ptrace(PTRACE_DETACH, pid, nullptr, nullptr);
         return false;
     }
     pid_ = pid;
@@ -97,9 +99,17 @@ bool DebuggerCore::detach() {
 
 bool DebuggerCore::kill() {
     if (pid_ == 0) return false;
-    ptrace(PTRACE_KILL, pid_, nullptr, nullptr);
+    // PTRACE_KILL is deprecated and a no-op on Linux >= 3.x.
+    // Use SIGKILL via kill(2) instead, then reap the zombie.
+    uninstallAllBps();
+    ::kill(pid_, SIGKILL);
     int status;
-    waitpid(pid_, &status, 0);
+    // Use WNOHANG loop to avoid blocking forever if the child is stuck
+    for (int i = 0; i < 50; i++) {
+        pid_t r = waitpid(pid_, &status, WNOHANG);
+        if (r == pid_ || r == -1) break;
+        usleep(100000);  // 100ms
+    }
     pid_ = 0;
     state_ = RunState::Idle;
     return true;
@@ -286,11 +296,22 @@ bool DebuggerCore::writeMemory(addr_t addr, const void* buf, size_t n) {
     ssize_t r = process_vm_writev(pid_, &local, 1, &remote, 1, 0);
     if (r == (ssize_t)n) return true;
 
+    // Fallback to PTRACE_POKEDATA word-by-word.
+    // IMPORTANT: POKEDATA writes a full 8-byte word. For partial writes
+    // (when n is not a multiple of 8, or the last chunk is < 8 bytes),
+    // we must PEEKDATA the existing word first and overlay only the
+    // intended bytes — otherwise we zero-extend and corrupt adjacent
+    // memory in the target.
     size_t done = 0;
     while (done < n) {
         size_t chunk = std::min((size_t)sizeof(long), n - done);
-        long word = 0;
-        memcpy(&word, (const u8*)buf + done, chunk);
+        errno = 0;
+        long word = ptrace(PTRACE_PEEKDATA, pid_, (void*)(addr + done), nullptr);
+        if (errno != 0) {
+            last_error_ = "writeMemory peek failed at " + hex(addr + done);
+            return false;
+        }
+        memcpy(&word, (const u8*)buf + done, chunk);  // overlay only chunk bytes
         if (ptrace(PTRACE_POKEDATA, pid_, (void*)(addr + done), (void*)word) == -1) {
             last_error_ = "writeMemory poke failed";
             return false;
@@ -356,7 +377,7 @@ std::vector<MemoryRegion> DebuggerCore::readMaps() {
         if (n >= 5) r.path = path;
         out.push_back(r);
     }
-    maps_cache_ = out;  // v1.0.5: cache for backtrace symbol resolution
+    maps_cache_ = out;  // v1.1.0: cache for backtrace symbol resolution
     return out;
 }
 
@@ -402,8 +423,9 @@ addr_t DebuggerCore::findSymbol(const std::string& name) {
 
 addr_t DebuggerCore::findFunctionStart(addr_t addr) {
     // Walk backwards looking for typical function prologue (push rbp / sub rsp etc.)
-    // This is a heuristic. Scan up to 4KB back.
-    for (addr_t a = addr; a > addr - 0x1000; a--) {
+    // This is a heuristic. Scan up to 4KB back, but never underflow.
+    addr_t limit = (addr >= 0x1000) ? (addr - 0x1000) : 0;
+    for (addr_t a = addr; a > limit; a--) {
         u8 b = peekByte(a);
         // 0x55 = push rbp (very common prologue start)
         if (b == 0x55) {
@@ -509,7 +531,7 @@ bool DebuggerCore::pokeByte(addr_t addr, u8 v) {
     return ptrace(PTRACE_POKEDATA, pid_, (void*)addr, (void*)word) != -1;
 }
 
-// ===== v1.0.5 advanced features =====
+// ===== v1.1.0 advanced features =====
 
 int DebuggerCore::addConditionalBreakpoint(addr_t addr, const std::string& condition,
                                             const std::string& label) {

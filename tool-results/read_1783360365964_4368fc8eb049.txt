@@ -1,0 +1,838 @@
+     1→     1→// NinjaDBG v1.0.5 - Disassembler implementation
+     2→     2→// Closed Source - Free - by Chapzoo
+     3→     3→#include "Disassembler.h"
+     4→     4→#include <cstring>
+     5→     5→#include <cstdio>
+     6→     6→#include <cstdarg>
+     7→     7→#include <algorithm>
+     8→     8→
+     9→     9→namespace ndbg {
+    10→    10→
+    11→    11→Disassembler::Disassembler() {}
+    12→    12→Disassembler::~Disassembler() {}
+    13→    13→
+    14→    14→const char* Disassembler::reg64(int i) {
+    15→    15→    static const char* r[] = {"rax","rcx","rdx","rbx","rsp","rbp","rsi","rdi",
+    16→    16→                              "r8","r9","r10","r11","r12","r13","r14","r15"};
+    17→    17→    return r[i & 0xF];
+    18→    18→}
+    19→    19→const char* Disassembler::reg32(int i) {
+    20→    20→    static const char* r[] = {"eax","ecx","edx","ebx","esp","ebp","esi","edi",
+    21→    21→                              "r8d","r9d","r10d","r11d","r12d","r13d","r14d","r15d"};
+    22→    22→    return r[i & 0xF];
+    23→    23→}
+    24→    24→const char* Disassembler::reg16(int i) {
+    25→    25→    static const char* r[] = {"ax","cx","dx","bx","sp","bp","si","di",
+    26→    26→                              "r8w","r9w","r10w","r11w","r12w","r13w","r14w","r15w"};
+    27→    27→    return r[i & 0xF];
+    28→    28→}
+    29→    29→const char* Disassembler::reg8(int i, bool rex) {
+    30→    30→    if (rex) {
+    31→    31→        static const char* r[] = {"al","cl","dl","bl","spl","bpl","sil","dil",
+    32→    32→                                  "r8b","r9b","r10b","r11b","r12b","r13b","r14b","r15b"};
+    33→    33→        return r[i & 0xF];
+    34→    34→    } else {
+    35→    35→        static const char* r[] = {"al","cl","dl","bl","ah","ch","dh","bh"};
+    36→    36→        return r[i & 0x7];
+    37→    37→    }
+    38→    38→}
+    39→    39→const char* Disassembler::xmm(int i) {
+    40→    40→    static const char* r[] = {"xmm0","xmm1","xmm2","xmm3","xmm4","xmm5","xmm6","xmm7",
+    41→    41→                              "xmm8","xmm9","xmm10","xmm11","xmm12","xmm13","xmm14","xmm15"};
+    42→    42→    return r[i & 0xF];
+    43→    43→}
+    44→    44→const char* Disassembler::cc_name(u8 cc) {
+    45→    45→    static const char* names[] = {"o","no","b","ae","e","ne","be","a",
+    46→    46→                                   "s","ns","p","np","l","ge","le","g"};
+    47→    47→    return names[cc & 0xF];
+    48→    48→}
+    49→    49→
+    50→    50→bool Disassembler::parsePrefixes(State& s) {
+    51→    51→    bool got_prefix = true;
+    52→    52→    while (got_prefix && s.pos < s.len) {
+    53→    53→        got_prefix = false;
+    54→    54→        u8 b = s.code[s.pos];
+    55→    55→        switch (b) {
+    56→    56→            case 0xF0: got_prefix = true; break;  // LOCK
+    57→    57→            case 0xF2: s.has_F2 = true; got_prefix = true; break;
+    58→    58→            case 0xF3: s.has_F3 = true; got_prefix = true; break;
+    59→    59→            case 0x66: s.has_66 = true; got_prefix = true; break;
+    60→    60→            case 0x67: s.has_67 = true; got_prefix = true; break;
+    61→    61→            case 0x2E: case 0x36: case 0x3E: case 0x26: case 0x64: case 0x65:
+    62→    62→                s.seg_override = b; got_prefix = true; break;
+    63→    63→            default:
+    64→    64→                if (b >= 0x40 && b <= 0x4F) {
+    65→    65→                    s.rex = true;
+    66→    66→                    s.rex_w = (b & 0x8) != 0;
+    67→    67→                    s.rex_r = (b & 0x4) != 0;
+    68→    68→                    s.rex_x = (b & 0x2) != 0;
+    69→    69→                    s.rex_b = (b & 0x1) != 0;
+    70→    70→                    got_prefix = true;
+    71→    71→                }
+    72→    72→                break;
+    73→    73→        }
+    74→    74→        if (got_prefix) s.pos++;
+    75→    75→    }
+    76→    76→    return true;
+    77→    77→}
+    78→    78→
+    79→    79→bool Disassembler::parseOpcode(State& s) {
+    80→    80→    if (s.pos >= s.len) return false;
+    81→    81→    s.opcode[0] = s.code[s.pos++];
+    82→    82→    s.opcode_len = 1;
+    83→    83→    if (s.opcode[0] == 0x0F) {
+    84→    84→        if (s.pos >= s.len) return false;
+    85→    85→        s.opcode[1] = s.code[s.pos++];
+    86→    86→        s.opcode_len = 2;
+    87→    87→        if (s.opcode[1] == 0x38 || s.opcode[1] == 0x3A) {
+    88→    88→            if (s.pos >= s.len) return false;
+    89→    89→            s.opcode[2] = s.code[s.pos++];
+    90→    90→            s.opcode_len = 3;
+    91→    91→        }
+    92→    92→    }
+    93→    93→    return true;
+    94→    94→}
+    95→    95→
+    96→    96→bool Disassembler::parseModRM(State& s, bool has_modrm) {
+    97→    97→    if (!has_modrm) return true;
+    98→    98→    if (s.pos >= s.len) return false;
+    99→    99→    s.has_modrm = true;
+   100→   100→    s.modrm = s.code[s.pos++];
+   101→   101→    u8 mod = (s.modrm >> 6) & 3;
+   102→   102→    u8 rm = s.modrm & 7;
+   103→   103→    if (mod != 3) {
+   104→   104→        // memory operand; may have SIB and displacement
+   105→   105→        if (mod == 0 && rm == 5) {
+   106→   106→            // disp32 (RIP-relative in 64-bit)
+   107→   107→            s.disp_size = 4;
+   108→   108→            if (s.pos + 4 > s.len) return false;
+   109→   109→            s.disp = (u32)s.code[s.pos] | ((u32)s.code[s.pos+1]<<8) |
+   110→   110→                     ((u32)s.code[s.pos+2]<<16) | ((u32)s.code[s.pos+3]<<24);
+   111→   111→            s.pos += 4;
+   112→   112→        } else if (rm == 4) {
+   113→   113→            // SIB follows
+   114→   114→            if (s.pos >= s.len) return false;
+   115→   115→            s.has_sib = true;
+   116→   116→            s.sib = s.code[s.pos++];
+   117→   117→            u8 base = s.sib & 7;
+   118→   118→            if (mod == 0 && base == 5) {
+   119→   119→                // disp32
+   120→   120→                s.disp_size = 4;
+   121→   121→                if (s.pos + 4 > s.len) return false;
+   122→   122→                s.disp = (u32)s.code[s.pos] | ((u32)s.code[s.pos+1]<<8) |
+   123→   123→                         ((u32)s.code[s.pos+2]<<16) | ((u32)s.code[s.pos+3]<<24);
+   124→   124→                s.pos += 4;
+   125→   125→            } else if (mod == 1) {
+   126→   126→                s.disp_size = 1;
+   127→   127→                if (s.pos + 1 > s.len) return false;
+   128→   128→                s.disp = (u8)s.code[s.pos++];
+   129→   129→            } else if (mod == 2) {
+   130→   130→                s.disp_size = 4;
+   131→   131→                if (s.pos + 4 > s.len) return false;
+   132→   132→                s.disp = (u32)s.code[s.pos] | ((u32)s.code[s.pos+1]<<8) |
+   133→   133→                         ((u32)s.code[s.pos+2]<<16) | ((u32)s.code[s.pos+3]<<24);
+   134→   134→                s.pos += 4;
+   135→   135→            }
+   136→   136→        } else if (mod == 1) {
+   137→   137→            s.disp_size = 1;
+   138→   138→            if (s.pos + 1 > s.len) return false;
+   139→   139→            s.disp = (u8)s.code[s.pos++];
+   140→   140→        } else if (mod == 2) {
+   141→   141→            s.disp_size = 4;
+   142→   142→            if (s.pos + 4 > s.len) return false;
+   143→   143→            s.disp = (u32)s.code[s.pos] | ((u32)s.code[s.pos+1]<<8) |
+   144→   144→                     ((u32)s.code[s.pos+2]<<16) | ((u32)s.code[s.pos+3]<<24);
+   145→   145→            s.pos += 4;
+   146→   146→        }
+   147→   147→    }
+   148→   148→    return true;
+   149→   149→}
+   150→   150→
+   151→   151→bool Disassembler::parseImmediate(State& s, size_t bytes) {
+   152→   152→    s.imm_size = bytes;
+   153→   153→    if (bytes == 0) return true;
+   154→   154→    if (s.pos + bytes > s.len) return false;
+   155→   155→    s.imm = 0;
+   156→   156→    for (size_t i = 0; i < bytes; i++) {
+   157→   157→        s.imm |= ((u64)s.code[s.pos + i]) << (i * 8);
+   158→   158→    }
+   159→   159→    s.pos += bytes;
+   160→   160→    return true;
+   161→   161→}
+   162→   162→
+   163→   163→std::string Disassembler::formatModRM(State& s, int operand_size) {
+   164→   164→    u8 mod = (s.modrm >> 6) & 3;
+   165→   165→    u8 reg = (s.modrm >> 3) & 7;
+   166→   166→    u8 rm  = s.modrm & 7;
+   167→   167→
+   168→   168→    char buf[128];
+   169→   169→    if (mod == 3) {
+   170→   170→        // register direct
+   171→   171→        int full = rm | (s.rex_b << 3);
+   172→   172→        const char* r = (operand_size == 8) ? reg64(full) :
+   173→   173→                        (operand_size == 4) ? reg32(full) :
+   174→   174→                        (operand_size == 2) ? reg16(full) :
+   175→   175→                        reg8(full, s.rex);
+   176→   176→        snprintf(buf, sizeof(buf), "%s", r);
+   177→   177→        return buf;
+   178→   178→    }
+   179→   179→
+   180→   180→    // memory operand
+   181→   181→    std::string m = "[";
+   182→   182→    if (s.seg_override) {
+   183→   183→        const char* segs[] = {"","","es:","cs:","ss:","ds:","fs:","gs:"};
+   184→   184→        m += segs[s.seg_override >> 3];
+   185→   185→    }
+   186→   186→
+   187→   187→    if (rm == 4 && s.has_sib) {
+   188→   188→        u8 scale = (s.sib >> 6) & 3;
+   189→   189→        u8 idx   = (s.sib >> 3) & 7;
+   190→   190→        u8 base  = s.sib & 7;
+   191→   191→        if (mod == 0 && base == 5) {
+   192→   192→            // disp32 only (with optional index)
+   193→   193→            snprintf(buf, sizeof(buf), "0x%x", s.disp);
+   194→   194→            m += buf;
+   195→   195→            if (idx != 4) {
+   196→   196→                int full_idx = idx | (s.rex_x << 3);
+   197→   197→                snprintf(buf, sizeof(buf), " + %s*%d", reg64(full_idx), 1 << scale);
+   198→   198→                m += buf;
+   199→   199→            }
+   200→   200→        } else {
+   201→   201→            int full_base = base | (s.rex_b << 3);
+   202→   202→            m += reg64(full_base);
+   203→   203→            if (idx != 4) {
+   204→   204→                int full_idx = idx | (s.rex_x << 3);
+   205→   205→                snprintf(buf, sizeof(buf), " + %s*%d", reg64(full_idx), 1 << scale);
+   206→   206→                m += buf;
+   207→   207→            }
+   208→   208→            if (mod == 1) {
+   209→   209→                int8_t d = (int8_t)(u8)s.disp;
+   210→   210→                if (d >= 0) snprintf(buf, sizeof(buf), " + 0x%x", d);
+   211→   211→                else        snprintf(buf, sizeof(buf), " - 0x%x", -d);
+   212→   212→                m += buf;
+   213→   213→            } else if (mod == 2) {
+   214→   214→                snprintf(buf, sizeof(buf), " + 0x%x", s.disp);
+   215→   215→                m += buf;
+   216→   216→            }
+   217→   217→        }
+   218→   218→    } else if (mod == 0 && rm == 5) {
+   219→   219→        // RIP-relative
+   220→   220→        i32 disp = (i32)s.disp;
+   221→   221→        addr_t target = s.address + s.pos - (s.opcode_len) - 0 + disp + (s.pos - s.opcode_len);
+   222→   222→        // Simpler: target = address_of_next_instruction + disp
+   223→   223→        // We don't know length yet — caller will compute it.
+   224→   224→        snprintf(buf, sizeof(buf), "rip%s0x%x", disp >= 0 ? "+" : "-", disp >= 0 ? disp : -disp);
+   225→   225→        m += buf;
+   226→   226→    } else {
+   227→   227→        int full_rm = rm | (s.rex_b << 3);
+   228→   228→        m += reg64(full_rm);
+   229→   229→        if (mod == 1) {
+   230→   230→            int8_t d = (int8_t)(u8)s.disp;
+   231→   231→            if (d >= 0) snprintf(buf, sizeof(buf), " + 0x%x", d);
+   232→   232→            else        snprintf(buf, sizeof(buf), " - 0x%x", -d);
+   233→   233→            m += buf;
+   234→   234→        } else if (mod == 2) {
+   235→   235→            snprintf(buf, sizeof(buf), " + 0x%x", s.disp);
+   236→   236→            m += buf;
+   237→   237→        }
+   238→   238→    }
+   239→   239→    m += "]";
+   240→   240→    return m;
+   241→   241→}
+   242→   242→
+   243→   243→Disassembler::Instruction Disassembler::disassembleOne(addr_t address, const u8* code, size_t code_len, size_t offset) {
+   244→   244→    State s;
+   245→   245→    s.code = code;
+   246→   246→    s.len = code_len;
+   247→   247→    s.pos = offset;
+   248→   248→    s.address = address;
+   249→   249→
+   250→   250→    if (!parsePrefixes(s) || !parseOpcode(s)) {
+   251→   251→        Instruction ins;
+   252→   252→        ins.address = address;
+   253→   253→        ins.length = 0;
+   254→   254→        return ins;
+   255→   255→    }
+   256→   256→
+   257→   257→    Instruction ins;
+   258→   258→    ins.address = address;
+   259→   259→
+   260→   260→    u8 op = s.opcode[0];
+   261→   261→    int operand_size = s.rex_w ? 8 : (s.has_66 ? 2 : 4);
+   262→   262→    const char* mnem = "???";
+   263→   263→    char ops[128] = {0};
+   264→   264→    bool needs_modrm = false;
+   265→   265→    size_t imm_bytes = 0;
+   266→   266→
+   267→   267→    auto reg_field = [&](int size) -> const char* {
+   268→   268→        int full = ((s.modrm >> 3) & 7) | (s.rex_r << 3);
+   269→   269→        return (size == 8) ? reg64(full) :
+   270→   270→               (size == 4) ? reg32(full) :
+   271→   271→               (size == 2) ? reg16(full) :
+   272→   272→               reg8(full, s.rex);
+   273→   273→    };
+   274→   274→    auto rm_field = [&](int size) -> const char* {
+   275→   275→        int full = (s.modrm & 7) | (s.rex_b << 3);
+   276→   276→        if (((s.modrm >> 6) & 3) == 3) {
+   277→   277→            return (size == 8) ? reg64(full) :
+   278→   278→                   (size == 4) ? reg32(full) :
+   279→   279→                   (size == 2) ? reg16(full) :
+   280→   280→                   reg8(full, s.rex);
+   281→   281→        }
+   282→   282→        return "mem";
+   283→   283→    };
+   284→   284→
+   285→   285→    // ===== 1-byte opcodes =====
+   286→   286→    if (op == 0x00 || op == 0x01 || op == 0x02 || op == 0x03 ||
+   287→   287→        op == 0x08 || op == 0x09 || op == 0x0A || op == 0x0B ||
+   288→   288→        op == 0x10 || op == 0x11 || op == 0x12 || op == 0x13 ||
+   289→   289→        op == 0x18 || op == 0x19 || op == 0x1A || op == 0x1B ||
+   290→   290→        op == 0x20 || op == 0x21 || op == 0x22 || op == 0x23 ||
+   291→   291→        op == 0x28 || op == 0x29 || op == 0x2A || op == 0x2B ||
+   292→   292→        op == 0x30 || op == 0x31 || op == 0x32 || op == 0x33 ||
+   293→   293→        op == 0x38 || op == 0x39 || op == 0x3A || op == 0x3B) {
+   294→   294→        static const char* mnems[8] = {"add","or","adc","sbb","and","sub","xor","cmp"};
+   295→   295→        int idx = (op >> 3) & 7;
+   296→   296→        mnem = mnems[idx];
+   297→   297→        bool is_mem_dir = (op & 6) == 0;     // 00/08/10/18/20/28/30/38: r/m8, r8
+   298→   298→        bool is_mem = (op & 1) == 0;
+   299→   299→        int dir_size = is_mem_dir ? 1 : operand_size;
+   300→   300→        needs_modrm = true;
+   301→   301→        if (!parseModRM(s, true)) { ins.length = 0; return ins; }
+   302→   302→        std::string mem = formatModRM(s, dir_size);
+   303→   303→        if (is_mem) {
+   304→   304→            snprintf(ops, sizeof(ops), "%s, %s", mem.c_str(), reg_field(dir_size));
+   305→   305→        } else {
+   306→   306→            snprintf(ops, sizeof(ops), "%s, %s", reg_field(dir_size), mem.c_str());
+   307→   307→        }
+   308→   308→    }
+   309→   309→    else if (op >= 0x50 && op <= 0x57) { mnem = "push"; snprintf(ops, sizeof(ops), "%s", reg64(op - 0x50)); ins.is_call=false; }
+   310→   310→    else if (op >= 0x58 && op <= 0x5F) { mnem = "pop";  snprintf(ops, sizeof(ops), "%s", reg64(op - 0x58)); }
+   311→   311→    else if (op == 0x90) {
+   312→   312→        mnem = s.rex_b ? "xchg rax, r8" : "nop";
+   313→   313→    }
+   314→   314→    else if (op >= 0x91 && op <= 0x97) { mnem = "xchg"; snprintf(ops, sizeof(ops), "rax, %s", reg64(op - 0x90)); }
+   315→   315→    else if (op == 0xCC) { mnem = "int3"; ins.is_call = false; }
+   316→   316→    else if (op == 0xCD) { mnem = "int"; imm_bytes = 1; if (parseImmediate(s, 1)) snprintf(ops, sizeof(ops), "0x%02llx", (unsigned long long)s.imm); }
+   317→   317→    else if (op == 0xCE) { mnem = "into"; }
+   318→   318→    else if (op == 0xCF) { mnem = "iret"; }
+   319→   319→    else if (op == 0xC3) { mnem = "ret"; ins.is_ret = true; }
+   320→   320→    else if (op == 0xC2) { mnem = "ret"; imm_bytes = 2; if (parseImmediate(s, 2)) snprintf(ops, sizeof(ops), "0x%llx", (unsigned long long)s.imm); ins.is_ret = true; }
+   321→   321→    else if (op == 0xCB) { mnem = "retf"; ins.is_ret = true; }
+   322→   322→    else if (op == 0xCA) { mnem = "retf"; imm_bytes = 2; if (parseImmediate(s, 2)) snprintf(ops, sizeof(ops), "0x%llx", (unsigned long long)s.imm); ins.is_ret = true; }
+   323→   323→    else if (op == 0xE8) {
+   324→   324→        mnem = "call";
+   325→   325→        imm_bytes = 4;
+   326→   326→        if (parseImmediate(s, 4)) {
+   327→   327→            i32 rel = (i32)s.imm;
+   328→   328→            addr_t target = s.address + (s.pos - offset) + rel;
+   329→   329→            snprintf(ops, sizeof(ops), "0x%llx", (unsigned long long)target);
+   330→   330→            ins.branch_target = target;
+   331→   331→            ins.has_branch_target = true;
+   332→   332→            ins.is_call = true;
+   333→   333→        }
+   334→   334→    }
+   335→   335→    else if (op == 0xE9) {
+   336→   336→        mnem = "jmp";
+   337→   337→        imm_bytes = 4;
+   338→   338→        if (parseImmediate(s, 4)) {
+   339→   339→            i32 rel = (i32)s.imm;
+   340→   340→            addr_t target = s.address + (s.pos - offset) + rel;
+   341→   341→            snprintf(ops, sizeof(ops), "0x%llx", (unsigned long long)target);
+   342→   342→            ins.branch_target = target;
+   343→   343→            ins.has_branch_target = true;
+   344→   344→            ins.is_jmp = true;
+   345→   345→        }
+   346→   346→    }
+   347→   347→    else if (op == 0xEB) {
+   348→   348→        mnem = "jmp";
+   349→   349→        imm_bytes = 1;
+   350→   350→        if (parseImmediate(s, 1)) {
+   351→   351→            i8 rel = (i8)s.imm;
+   352→   352→            addr_t target = s.address + (s.pos - offset) + rel;
+   353→   353→            snprintf(ops, sizeof(ops), "short 0x%llx", (unsigned long long)target);
+   354→   354→            ins.branch_target = target;
+   355→   355→            ins.has_branch_target = true;
+   356→   356→            ins.is_jmp = true;
+   357→   357→        }
+   358→   358→    }
+   359→   359→    else if (op >= 0x70 && op <= 0x7F) {
+   360→   360→        static const char* ccs[] = {"jo","jno","jb","jae","je","jne","jbe","ja",
+   361→   361→                                     "js","jns","jp","jnp","jl","jge","jle","jg"};
+   362→   362→        mnem = ccs[op - 0x70];
+   363→   363→        imm_bytes = 1;
+   364→   364→        if (parseImmediate(s, 1)) {
+   365→   365→            i8 rel = (i8)s.imm;
+   366→   366→            addr_t target = s.address + (s.pos - offset) + rel;
+   367→   367→            snprintf(ops, sizeof(ops), "0x%llx", (unsigned long long)target);
+   368→   368→            ins.branch_target = target;
+   369→   369→            ins.has_branch_target = true;
+   370→   370→            ins.is_jmp = true;
+   371→   371→            ins.is_conditional = true;
+   372→   372→        }
+   373→   373→    }
+   374→   374→    else if (op >= 0x40 && op <= 0x47) { mnem = "inc"; snprintf(ops, sizeof(ops), "%s", reg32(op - 0x40)); }
+   375→   375→    else if (op >= 0x48 && op <= 0x4F) { mnem = "dec"; snprintf(ops, sizeof(ops), "%s", reg32(op - 0x48)); }
+   376→   376→    else if (op == 0xA8) { mnem = "test"; imm_bytes = operand_size == 8 ? 8 : (operand_size == 2 ? 2 : 4); if (parseImmediate(s, imm_bytes)) snprintf(ops, sizeof(ops), "%s, 0x%llx", operand_size==8?"rax":"eax", (unsigned long long)s.imm); }
+   377→   377→    else if (op == 0xA9) { mnem = "test"; imm_bytes = operand_size == 8 ? 8 : (operand_size == 2 ? 2 : 4); if (parseImmediate(s, imm_bytes)) snprintf(ops, sizeof(ops), "%s, 0x%llx", operand_size==8?"rax":"eax", (unsigned long long)s.imm); }
+   378→   378→    else if (op == 0xB8 || op == 0xB9 || op == 0xBA || op == 0xBB ||
+   379→   379→             op == 0xBC || op == 0xBD || op == 0xBE || op == 0xBF) {
+   380→   380→        mnem = "mov";
+   381→   381→        int r = (op - 0xB8) | (s.rex_b << 3);
+   382→   382→        imm_bytes = operand_size == 8 ? 8 : (operand_size == 2 ? 2 : 4);
+   383→   383→        if (parseImmediate(s, imm_bytes)) {
+   384→   384→            snprintf(ops, sizeof(ops), "%s, 0x%llx",
+   385→   385→                     operand_size == 8 ? reg64(r) :
+   386→   386→                     operand_size == 4 ? reg32(r) : reg16(r),
+   387→   387→                     (unsigned long long)s.imm);
+   388→   388→        }
+   389→   389→    }
+   390→   390→    else if (op >= 0xB0 && op <= 0xB7) {
+   391→   391→        mnem = "mov";
+   392→   392→        int r = (op - 0xB0) | (s.rex_b << 3);
+   393→   393→        imm_bytes = 1;
+   394→   394→        if (parseImmediate(s, 1))
+   395→   395→            snprintf(ops, sizeof(ops), "%s, 0x%llx", reg8(r, s.rex), (unsigned long long)s.imm);
+   396→   396→    }
+   397→   397→    else if (op == 0xC6) {
+   398→   398→        mnem = "mov";
+   399→   399→        needs_modrm = true;
+   400→   400→        if (parseModRM(s, true)) {
+   401→   401→            std::string mem = formatModRM(s, 1);
+   402→   402→            imm_bytes = 1;
+   403→   403→            if (parseImmediate(s, 1))
+   404→   404→                snprintf(ops, sizeof(ops), "byte %s, 0x%llx", mem.c_str(), (unsigned long long)s.imm);
+   405→   405→        }
+   406→   406→    }
+   407→   407→    else if (op == 0xC7) {
+   408→   408→        mnem = "mov";
+   409→   409→        needs_modrm = true;
+   410→   410→        if (parseModRM(s, true)) {
+   411→   411→            std::string mem = formatModRM(s, operand_size);
+   412→   412→            imm_bytes = operand_size == 8 ? 4 : (operand_size == 2 ? 2 : 4);  // mov r/m64, imm32 (sign-extended)
+   413→   413→            if (parseImmediate(s, imm_bytes))
+   414→   414→                snprintf(ops, sizeof(ops), "%s, 0x%llx", mem.c_str(), (unsigned long long)s.imm);
+   415→   415→        }
+   416→   416→    }
+   417→   417→    else if (op == 0x83) {
+   418→   418→        // op r/m, imm8 — group 1
+   419→   419→        needs_modrm = true;
+   420→   420→        if (parseModRM(s, true)) {
+   421→   421→            static const char* g1[] = {"add","or","adc","sbb","and","sub","xor","cmp"};
+   422→   422→            int sub = (s.modrm >> 3) & 7;
+   423→   423→            mnem = g1[sub];
+   424→   424→            std::string mem = formatModRM(s, operand_size);
+   425→   425→            imm_bytes = 1;
+   426→   426→            if (parseImmediate(s, 1)) {
+   427→   427→                i8 v = (i8)s.imm;
+   428→   428→                snprintf(ops, sizeof(ops), "%s, 0x%x", mem.c_str(), (u8)v);
+   429→   429→            }
+   430→   430→        }
+   431→   431→    }
+   432→   432→    else if (op == 0x81) {
+   433→   433→        needs_modrm = true;
+   434→   434→        if (parseModRM(s, true)) {
+   435→   435→            static const char* g1[] = {"add","or","adc","sbb","and","sub","xor","cmp"};
+   436→   436→            int sub = (s.modrm >> 3) & 7;
+   437→   437→            mnem = g1[sub];
+   438→   438→            std::string mem = formatModRM(s, operand_size);
+   439→   439→            imm_bytes = operand_size == 2 ? 2 : 4;
+   440→   440→            if (parseImmediate(s, imm_bytes)) {
+   441→   441→                snprintf(ops, sizeof(ops), "%s, 0x%llx", mem.c_str(), (unsigned long long)s.imm);
+   442→   442→            }
+   443→   443→        }
+   444→   444→    }
+   445→   445→    else if (op == 0xFF) {
+   446→   446→        // group 5: inc / dec / call / jmp / push
+   447→   447→        needs_modrm = true;
+   448→   448→        if (parseModRM(s, true)) {
+   449→   449→            int sub = (s.modrm >> 3) & 7;
+   450→   450→            std::string mem = formatModRM(s, operand_size);
+   451→   451→            switch (sub) {
+   452→   452→                case 0: mnem = "inc"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); break;
+   453→   453→                case 1: mnem = "dec"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); break;
+   454→   454→                case 2: mnem = "call"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); ins.is_call = true; break;
+   455→   455→                case 3: mnem = "callf"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); ins.is_call = true; break;
+   456→   456→                case 4: mnem = "jmp"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); ins.is_jmp = true; break;
+   457→   457→                case 5: mnem = "jmpf"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); ins.is_jmp = true; break;
+   458→   458→                case 6: mnem = "push"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); break;
+   459→   459→                default: mnem = "(ff /?)";
+   460→   460→            }
+   461→   461→        }
+   462→   462→    }
+   463→   463→    else if (op == 0x88 || op == 0x89 || op == 0x8A || op == 0x8B) {
+   464→   464→        mnem = "mov";
+   465→   465→        needs_modrm = true;
+   466→   466→        bool is_byte = (op & 1) == 0;
+   467→   467→        int size = is_byte ? 1 : operand_size;
+   468→   468→        if (parseModRM(s, true)) {
+   469→   469→            std::string mem = formatModRM(s, size);
+   470→   470→            if (op & 2) {
+   471→   471→                // 8A / 8B: reg, r/m
+   472→   472→                snprintf(ops, sizeof(ops), "%s, %s", reg_field(size), mem.c_str());
+   473→   473→            } else {
+   474→   474→                // 88 / 89: r/m, reg
+   475→   475→                snprintf(ops, sizeof(ops), "%s, %s", mem.c_str(), reg_field(size));
+   476→   476→            }
+   477→   477→        }
+   478→   478→    }
+   479→   479→    else if (op == 0x8D) {
+   480→   480→        mnem = "lea";
+   481→   481→        needs_modrm = true;
+   482→   482→        if (parseModRM(s, true)) {
+   483→   483→            std::string mem = formatModRM(s, operand_size);
+   484→   484→            snprintf(ops, sizeof(ops), "%s, %s", reg_field(operand_size), mem.c_str());
+   485→   485→        }
+   486→   486→    }
+   487→   487→    else if (op == 0xF6 || op == 0xF7) {
+   488→   488→        // group 3: test/not/neg/mul/imul/div/idiv
+   489→   489→        needs_modrm = true;
+   490→   490→        if (parseModRM(s, true)) {
+   491→   491→            int sub = (s.modrm >> 3) & 7;
+   492→   492→            std::string mem = formatModRM(s, op == 0xF6 ? 1 : operand_size);
+   493→   493→            switch (sub) {
+   494→   494→                case 0: case 1: {
+   495→   495→                    mnem = "test";
+   496→   496→                    imm_bytes = (op == 0xF6) ? 1 : (operand_size == 2 ? 2 : 4);
+   497→   497→                    if (parseImmediate(s, imm_bytes))
+   498→   498→                        snprintf(ops, sizeof(ops), "%s, 0x%llx", mem.c_str(), (unsigned long long)s.imm);
+   499→   499→                    break;
+   500→   500→                }
+   501→   501→                case 2: mnem = "not"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); break;
+   502→   502→                case 3: mnem = "neg"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); break;
+   503→   503→                case 4: mnem = "mul"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); break;
+   504→   504→                case 5: mnem = "imul"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); break;
+   505→   505→                case 6: mnem = "div"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); break;
+   506→   506→                case 7: mnem = "idiv"; snprintf(ops, sizeof(ops), "%s", mem.c_str()); break;
+   507→   507→            }
+   508→   508→        }
+   509→   509→    }
+   510→   510→    else if (op == 0xC1 || op == 0xC0) {
+   511→   511→        // shift r/m, imm8 — group 2
+   512→   512→        needs_modrm = true;
+   513→   513→        if (parseModRM(s, true)) {
+   514→   514→            static const char* g2[] = {"rol","ror","rcl","rcr","shl","shr","shl","sar"};
+   515→   515→            int sub = (s.modrm >> 3) & 7;
+   516→   516→            mnem = g2[sub];
+   517→   517→            int size = (op == 0xC0) ? 1 : operand_size;
+   518→   518→            std::string mem = formatModRM(s, size);
+   519→   519→            imm_bytes = 1;
+   520→   520→            if (parseImmediate(s, 1))
+   521→   521→                snprintf(ops, sizeof(ops), "%s, 0x%llx", mem.c_str(), (unsigned long long)s.imm);
+   522→   522→        }
+   523→   523→    }
+   524→   524→    else if (op == 0xD1 || op == 0xD3) {
+   525→   525→        // shift r/m, 1 / shift r/m, cl — group 2
+   526→   526→        needs_modrm = true;
+   527→   527→        if (parseModRM(s, true)) {
+   528→   528→            static const char* g2[] = {"rol","ror","rcl","rcr","shl","shr","shl","sar"};
+   529→   529→            int sub = (s.modrm >> 3) & 7;
+   530→   530→            mnem = g2[sub];
+   531→   531→            int size = (op == 0xD1) ? operand_size : operand_size;  // size depends on 66/REX
+   532→   532→            std::string mem = formatModRM(s, size);
+   533→   533→            if (op == 0xD1) snprintf(ops, sizeof(ops), "%s, 1", mem.c_str());
+   534→   534→            else            snprintf(ops, sizeof(ops), "%s, cl", mem.c_str());
+   535→   535→        }
+   536→   536→    }
+   537→   537→    else if (op == 0x85) {
+   538→   538→        mnem = "test"; needs_modrm = true;
+   539→   539→        if (parseModRM(s, true)) {
+   540→   540→            std::string mem = formatModRM(s, operand_size);
+   541→   541→            snprintf(ops, sizeof(ops), "%s, %s", mem.c_str(), reg_field(operand_size));
+   542→   542→        }
+   543→   543→    }
+   544→   544→    else if (op == 0x84) { mnem = "test"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, 1); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(1)); } }
+   545→   545→    else if (op == 0x86) { mnem = "xchg"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, 1); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(1)); } }
+   546→   546→    else if (op == 0x87) { mnem = "xchg"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, operand_size); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(operand_size)); } }
+   547→   547→    else if (op == 0x8E) { mnem = "mov"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, 2); static const char* sregs[] = {"es","cs","ss","ds","fs","gs"}; snprintf(ops, sizeof(ops), "%s, %s", sregs[(s.modrm>>3)&7], m.c_str()); } }
+   548→   548→    else if (op == 0x8C) { mnem = "mov"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, 2); static const char* sregs[] = {"es","cs","ss","ds","fs","gs"}; snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), sregs[(s.modrm>>3)&7]); } }
+   549→   549→    else if (op == 0xF4) { mnem = "hlt"; }
+   550→   550→    else if (op == 0xF8) { mnem = "clc"; }
+   551→   551→    else if (op == 0xF9) { mnem = "stc"; }
+   552→   552→    else if (op == 0xFA) { mnem = "cli"; }
+   553→   553→    else if (op == 0xFB) { mnem = "sti"; }
+   554→   554→    else if (op == 0xFC) { mnem = "cld"; }
+   555→   555→    else if (op == 0xFD) { mnem = "std"; }
+   556→   556→    else if (op == 0x9C) { mnem = "pushf"; }
+   557→   557→    else if (op == 0x9D) { mnem = "popf"; }
+   558→   558→    else if (op == 0x9E) { mnem = "sahf"; }
+   559→   559→    else if (op == 0x9F) { mnem = "lahf"; }
+   560→   560→    else if (op == 0xC9) { mnem = "leave"; }
+   561→   561→    else if (op == 0xE4) { mnem = "in"; imm_bytes = 1; if (parseImmediate(s, 1)) snprintf(ops, sizeof(ops), "al, 0x%llx", (unsigned long long)s.imm); }
+   562→   562→    else if (op == 0xE5) { mnem = "in"; imm_bytes = 1; if (parseImmediate(s, 1)) snprintf(ops, sizeof(ops), "%s, 0x%llx", operand_size==4?"eax":"ax", (unsigned long long)s.imm); }
+   563→   563→    else if (op == 0xE6) { mnem = "out"; imm_bytes = 1; if (parseImmediate(s, 1)) snprintf(ops, sizeof(ops), "0x%llx, al", (unsigned long long)s.imm); }
+   564→   564→    else if (op == 0xE7) { mnem = "out"; imm_bytes = 1; if (parseImmediate(s, 1)) snprintf(ops, sizeof(ops), "0x%llx, %s", (unsigned long long)s.imm, operand_size==4?"eax":"ax"); }
+   565→   565→    else if (op == 0xEC) { mnem = "in"; snprintf(ops, sizeof(ops), "al, dx"); }
+   566→   566→    else if (op == 0xED) { mnem = "in"; snprintf(ops, sizeof(ops), "%s, dx", operand_size==4?"eax":"ax"); }
+   567→   567→    else if (op == 0xEE) { mnem = "out"; snprintf(ops, sizeof(ops), "dx, al"); }
+   568→   568→    else if (op == 0xEF) { mnem = "out"; snprintf(ops, sizeof(ops), "dx, %s", operand_size==4?"eax":"ax"); }
+   569→   569→    else if (op == 0xA4) { mnem = "movsb"; }
+   570→   570→    else if (op == 0xA5) { mnem = operand_size==4 ? "movsd" : (operand_size==8 ? "movsq" : "movsw"); }
+   571→   571→    else if (op == 0xA6) { mnem = "cmpsb"; }
+   572→   572→    else if (op == 0xA7) { mnem = operand_size==4 ? "cmpsd" : (operand_size==8 ? "cmpsq" : "cmpsw"); }
+   573→   573→    else if (op == 0xAA) { mnem = "stosb"; }
+   574→   574→    else if (op == 0xAB) { mnem = operand_size==4 ? "stosd" : (operand_size==8 ? "stosq" : "stosw"); }
+   575→   575→    else if (op == 0xAC) { mnem = "lodsb"; }
+   576→   576→    else if (op == 0xAD) { mnem = operand_size==4 ? "lodsd" : (operand_size==8 ? "lodsq" : "lodsw"); }
+   577→   577→    else if (op == 0xAE) { mnem = "scasb"; }
+   578→   578→    else if (op == 0xAF) { mnem = operand_size==4 ? "scasd" : (operand_size==8 ? "scasq" : "scasw"); }
+   579→   579→    else if (op == 0xF2 && s.pos < s.len && s.code[s.pos] == 0xAE) {
+   580→   580→        mnem = "repne scasb"; s.pos++;
+   581→   581→    }
+   582→   582→    else if (op == 0xF3 && s.pos < s.len && s.code[s.pos] == 0xA4) {
+   583→   583→        mnem = "rep movsb"; s.pos++;
+   584→   584→    }
+   585→   585→    else if (op == 0xF3 && s.pos < s.len && s.code[s.pos] == 0xA6) {
+   586→   586→        mnem = "repe cmpsb"; s.pos++;
+   587→   587→    }
+   588→   588→    else if (op == 0xE0) { mnem = "loopne"; imm_bytes = 1; if (parseImmediate(s, 1)) { i8 r = (i8)s.imm; addr_t t = s.address + (s.pos - offset) + r; snprintf(ops, sizeof(ops), "0x%llx", (unsigned long long)t); } }
+   589→   589→    else if (op == 0xE1) { mnem = "loope";  imm_bytes = 1; if (parseImmediate(s, 1)) { i8 r = (i8)s.imm; addr_t t = s.address + (s.pos - offset) + r; snprintf(ops, sizeof(ops), "0x%llx", (unsigned long long)t); } }
+   590→   590→    else if (op == 0xE2) { mnem = "loop";   imm_bytes = 1; if (parseImmediate(s, 1)) { i8 r = (i8)s.imm; addr_t t = s.address + (s.pos - offset) + r; snprintf(ops, sizeof(ops), "0x%llx", (unsigned long long)t); } }
+   591→   591→    else if (op == 0xE3) { mnem = "jrcxz";  imm_bytes = 1; if (parseImmediate(s, 1)) { i8 r = (i8)s.imm; addr_t t = s.address + (s.pos - offset) + r; snprintf(ops, sizeof(ops), "0x%llx", (unsigned long long)t); } }
+   592→   592→
+   593→   593→    // ===== Two-byte opcodes (0F xx) =====
+   594→   594→    else if (s.opcode_len >= 2 && s.opcode[0] == 0x0F) {
+   595→   595→        u8 op2 = s.opcode[1];
+   596→   596→        if (op2 == 0x05) { mnem = "syscall"; ins.is_syscall = true; }
+   597→   597→        else if (op2 == 0x07) { mnem = "sysret"; }
+   598→   598→        else if (op2 == 0x0B) { mnem = "ud2"; }
+   599→   599→        else if (op2 == 0x0D) { mnem = "prefetch"; needs_modrm = true; parseModRM(s, true); }
+   600→   600→        else if (op2 == 0x0E) { mnem = "femms"; }
+   601→   601→        else if (op2 == 0x10 || op2 == 0x11) {
+   602→   602→            // movups/movupd (depends on F2/F3 prefix)
+   603→   603→            mnem = s.has_F3 ? "movss" : (s.has_66 ? "movupd" : "movups");
+   604→   604→            needs_modrm = true;
+   605→   605→            if (parseModRM(s, true)) {
+   606→   606→                auto m = formatModRM(s, 16);
+   607→   607→                snprintf(ops, sizeof(ops), "%s, %s", reg_field(16), m.c_str());
+   608→   608→                // Override reg name to xmm
+   609→   609→                int full = ((s.modrm >> 3) & 7) | (s.rex_r << 3);
+   610→   610→                snprintf(ops, sizeof(ops), "%s, %s", xmm(full), m.c_str());
+   611→   611→            }
+   612→   612→        }
+   613→   613→        else if (op2 == 0x18) {
+   614→   614→            // group 16: prefetch hints (rarely useful — treat as nop)
+   615→   615→            mnem = "prefetch"; needs_modrm = true; parseModRM(s, true);
+   616→   616→        }
+   617→   617→        else if (op2 == 0x1F) {
+   618→   618→            // multi-byte NOP (modrm form)
+   619→   619→            mnem = "nop"; needs_modrm = true; parseModRM(s, true);
+   620→   620→        }
+   621→   621→        else if (op2 >= 0x80 && op2 <= 0x8F) {
+   622→   622→            // Jcc rel32
+   623→   623→            static const char* ccs[] = {"jo","jno","jb","jae","je","jne","jbe","ja",
+   624→   624→                                         "js","jns","jp","jnp","jl","jge","jle","jg"};
+   625→   625→            mnem = ccs[op2 - 0x80];
+   626→   626→            imm_bytes = 4;
+   627→   627→            if (parseImmediate(s, 4)) {
+   628→   628→                i32 rel = (i32)s.imm;
+   629→   629→                addr_t target = s.address + (s.pos - offset) + rel;
+   630→   630→                snprintf(ops, sizeof(ops), "0x%llx", (unsigned long long)target);
+   631→   631→                ins.branch_target = target;
+   632→   632→                ins.has_branch_target = true;
+   633→   633→                ins.is_jmp = true;
+   634→   634→                ins.is_conditional = true;
+   635→   635→            }
+   636→   636→        }
+   637→   637→        else if (op2 >= 0x40 && op2 <= 0x4F) {
+   638→   638→            // CMOVcc
+   639→   639→            static const char* ccs[] = {"cmovo","cmovno","cmovb","cmovae","cmove","cmovne","cmovbe","cmova",
+   640→   640→                                         "cmovs","cmovns","cmovp","cmovnp","cmovl","cmovge","cmovle","cmovg"};
+   641→   641→            mnem = ccs[op2 - 0x40];
+   642→   642→            needs_modrm = true;
+   643→   643→            if (parseModRM(s, true)) {
+   644→   644→                auto m = formatModRM(s, operand_size);
+   645→   645→                snprintf(ops, sizeof(ops), "%s, %s", reg_field(operand_size), m.c_str());
+   646→   646→            }
+   647→   647→        }
+   648→   648→        else if (op2 >= 0x90 && op2 <= 0x9F) {
+   649→   649→            // SETcc r/m8
+   650→   650→            static const char* ccs[] = {"seto","setno","setb","setae","sete","setne","setbe","seta",
+   651→   651→                                         "sets","setns","setp","setnp","setl","setge","setle","setg"};
+   652→   652→            mnem = ccs[op2 - 0x90];
+   653→   653→            needs_modrm = true;
+   654→   654→            if (parseModRM(s, true)) {
+   655→   655→                auto m = formatModRM(s, 1);
+   656→   656→                snprintf(ops, sizeof(ops), "%s", m.c_str());
+   657→   657→            }
+   658→   658→        }
+   659→   659→        else if (op2 == 0xA2) { mnem = "cpuid"; }
+   660→   660→        else if (op2 == 0xA0) { mnem = "push fs"; }
+   661→   661→        else if (op2 == 0xA1) { mnem = "pop fs"; }
+   662→   662→        else if (op2 == 0xA8) { mnem = "push gs"; }
+   663→   663→        else if (op2 == 0xA9) { mnem = "pop gs"; }
+   664→   664→        else if (op2 == 0xB6) {
+   665→   665→            // movzx r, r/m8
+   666→   666→            mnem = "movzx"; needs_modrm = true;
+   667→   667→            if (parseModRM(s, true)) {
+   668→   668→                auto m = formatModRM(s, 1);
+   669→   669→                snprintf(ops, sizeof(ops), "%s, %s", reg_field(operand_size), m.c_str());
+   670→   670→            }
+   671→   671→        }
+   672→   672→        else if (op2 == 0xB7) {
+   673→   673→            // movzx r, r/m16
+   674→   674→            mnem = "movzx"; needs_modrm = true;
+   675→   675→            if (parseModRM(s, true)) {
+   676→   676→                auto m = formatModRM(s, 2);
+   677→   677→                snprintf(ops, sizeof(ops), "%s, %s", reg_field(operand_size), m.c_str());
+   678→   678→            }
+   679→   679→        }
+   680→   680→        else if (op2 == 0xBE) {
+   681→   681→            // movsx r, r/m8
+   682→   682→            mnem = "movsx"; needs_modrm = true;
+   683→   683→            if (parseModRM(s, true)) {
+   684→   684→                auto m = formatModRM(s, 1);
+   685→   685→                snprintf(ops, sizeof(ops), "%s, %s", reg_field(operand_size), m.c_str());
+   686→   686→            }
+   687→   687→        }
+   688→   688→        else if (op2 == 0xBF) {
+   689→   689→            // movsx r, r/m16
+   690→   690→            mnem = "movsx"; needs_modrm = true;
+   691→   691→            if (parseModRM(s, true)) {
+   692→   692→                auto m = formatModRM(s, 2);
+   693→   693→                snprintf(ops, sizeof(ops), "%s, %s", reg_field(operand_size), m.c_str());
+   694→   694→            }
+   695→   695→        }
+   696→   696→        else if (op2 == 0xAF) {
+   697→   697→            // imul r, r/m
+   698→   698→            mnem = "imul"; needs_modrm = true;
+   699→   699→            if (parseModRM(s, true)) {
+   700→   700→                auto m = formatModRM(s, operand_size);
+   701→   701→                snprintf(ops, sizeof(ops), "%s, %s", reg_field(operand_size), m.c_str());
+   702→   702→            }
+   703→   703→        }
+   704→   704→        else if (op2 == 0xB0 || op2 == 0xB1) {
+   705→   705→            // cmpxchg
+   706→   706→            mnem = "cmpxchg"; needs_modrm = true;
+   707→   707→            if (parseModRM(s, true)) {
+   708→   708→                int size = (op2 == 0xB0) ? 1 : operand_size;
+   709→   709→                auto m = formatModRM(s, size);
+   710→   710→                snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(size));
+   711→   711→            }
+   712→   712→        }
+   713→   713→        else if (op2 == 0xC0) { mnem = "xadd"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, 1); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(1)); } }
+   714→   714→        else if (op2 == 0xC1) { mnem = "xadd"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, operand_size); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(operand_size)); } }
+   715→   715→        else if (op2 == 0xBA) {
+   716→   716→            // group 8: bt/bts/btr/btc imm8
+   717→   717→            needs_modrm = true;
+   718→   718→            if (parseModRM(s, true)) {
+   719→   719→                int sub = (s.modrm >> 3) & 7;
+   720→   720→                static const char* g8[] = {"","","bt","bts","btr","btc"};
+   721→   721→                mnem = sub >= 2 ? g8[sub] : "???";
+   722→   722→                auto m = formatModRM(s, operand_size);
+   723→   723→                imm_bytes = 1;
+   724→   724→                if (parseImmediate(s, 1))
+   725→   725→                    snprintf(ops, sizeof(ops), "%s, 0x%llx", m.c_str(), (unsigned long long)s.imm);
+   726→   726→            }
+   727→   727→        }
+   728→   728→        else if (op2 == 0xA3) { mnem = "bt"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, operand_size); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(operand_size)); } }
+   729→   729→        else if (op2 == 0xAB) { mnem = "bts"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, operand_size); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(operand_size)); } }
+   730→   730→        else if (op2 == 0xB3) { mnem = "btr"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, operand_size); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(operand_size)); } }
+   731→   731→        else if (op2 == 0xBB) { mnem = "btc"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, operand_size); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(operand_size)); } }
+   732→   732→        else if (op2 == 0xBC) { mnem = "bsf"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, operand_size); snprintf(ops, sizeof(ops), "%s, %s", reg_field(operand_size), m.c_str()); } }
+   733→   733→        else if (op2 == 0xBD) { mnem = "bsr"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, operand_size); snprintf(ops, sizeof(ops), "%s, %s", reg_field(operand_size), m.c_str()); } }
+   734→   734→        else if (op2 == 0x31) { mnem = "rdtsc"; }
+   735→   735→        else if (op2 == 0x32) { mnem = "rdmsr"; }
+   736→   736→        else if (op2 == 0x33) { mnem = "rdpmc"; }
+   737→   737→        else if (op2 == 0x34) { mnem = "sysenter"; }
+   738→   738→        else if (op2 == 0x35) { mnem = "sysexit"; }
+   739→   739→        else {
+   740→   740→            // Unknown 0F xx — fall through to db
+   741→   741→            snprintf((char*)ins.mnemonic, sizeof(ins.mnemonic), "(0F %02X)", op2);
+   742→   742→        }
+   743→   743→    }
+   744→   744→
+   745→   745→    if (strcmp(mnem, "???") == 0) {
+   746→   746→        // Unknown — emit as raw byte
+   747→   747→        snprintf((char*)ins.mnemonic, sizeof(ins.mnemonic), "db");
+   748→   748→        snprintf((char*)ins.operands, sizeof(ins.operands), "0x%02X", op);
+   749→   749→    } else {
+   750→   750→        strncpy((char*)ins.mnemonic, mnem, sizeof(ins.mnemonic) - 1);
+   751→   751→        strncpy((char*)ins.operands, ops, sizeof(ins.operands) - 1);
+   752→   752→    }
+   753→   753→
+   754→   754→    // Compose text
+   755→   755→    snprintf((char*)ins.text, sizeof(ins.text), "%s %s",
+   756→   756→             ins.mnemonic, ins.operands);
+   757→   757→
+   758→   758→    // Length = bytes consumed
+   759→   759→    ins.length = s.pos - offset;
+   760→   760→
+   761→   761→    // Save bytes
+   762→   762→    if (ins.length > 0 && ins.length <= 15) {
+   763→   763→        memcpy(ins.bytes, s.code + offset, ins.length);
+   764→   764→    }
+   765→   765→
+   766→   766→    return ins;
+   767→   767→}
+   768→   768→
+   769→   769→std::vector<Disassembler::Instruction> Disassembler::disassemble(addr_t address, const u8* code, size_t code_len, size_t n) {
+   770→   770→    std::vector<Instruction> result;
+   771→   771→    size_t offset = 0;
+   772→   772→    addr_t cur = address;
+   773→   773→    for (size_t i = 0; i < n && offset < code_len; i++) {
+   774→   774→        Instruction ins = disassembleOne(cur, code, code_len, offset);
+   775→   775→        if (ins.length == 0) {
+   776→   776→            ins.length = 1;
+   777→   777→            ins.bytes[0] = code[offset];
+   778→   778→            snprintf((char*)ins.mnemonic, sizeof(ins.mnemonic), "db");
+   779→   779→            snprintf((char*)ins.operands, sizeof(ins.operands), "0x%02X", code[offset]);
+   780→   780→            snprintf((char*)ins.text, sizeof(ins.text), "db 0x%02X", code[offset]);
+   781→   781→        }
+   782→   782→        result.push_back(ins);
+   783→   783→        offset += ins.length;
+   784→   784→        cur += ins.length;
+   785→   785→    }
+   786→   786→    return result;
+   787→   787→}
+   788→   788→
+   789→   789→std::vector<Disassembler::Instruction> Disassembler::disassembleN(addr_t address, const std::vector<u8>& bytes, size_t n) {
+   790→   790→    if (bytes.empty()) return {};
+   791→   791→    return disassemble(address, bytes.data(), bytes.size(), n);
+   792→   792→}
+   793→   793→
+   794→   794→std::string Disassembler::format(const Instruction& ins, bool show_bytes) {
+   795→   795→    char buf[256];
+   796→   796→    if (show_bytes) {
+   797→   797→        char hex[64] = {0};
+   798→   798→        for (size_t i = 0; i < ins.length && i < 8; i++) {
+   799→   799→            char b[4];
+   800→   800→            snprintf(b, sizeof(b), "%02x ", ins.bytes[i]);
+   801→   801→            strncat(hex, b, sizeof(hex) - strlen(hex) - 1);
+   802→   802→        }
+   803→   803→        snprintf(buf, sizeof(buf), "0x%016llx  %-24s %s %s",
+   804→   804→                 (unsigned long long)ins.address, hex,
+   805→   805→                 ins.mnemonic, ins.operands);
+   806→   806→    } else {
+   807→   807→        snprintf(buf, sizeof(buf), "0x%016llx  %s %s",
+   808→   808→                 (unsigned long long)ins.address,
+   809→   809→                 ins.mnemonic, ins.operands);
+   810→   810→    }
+   811→   811→    return buf;
+   812→   812→}
+   813→   813→
+   814→   814→std::string Disassembler::formatAnnotated(const Instruction& ins, const std::string& annotation, bool show_bytes) {
+   815→   815→    std::string s = format(ins, show_bytes);
+   816→   816→    if (!annotation.empty()) {
+   817→   817→        s += "  ; " + annotation;
+   818→   818→    }
+   819→   819→    return s;
+   820→   820→}
+   821→   821→
+   822→   822→Disassembler::Category Disassembler::category(const Instruction& ins) const {
+   823→   823→    if (ins.is_call) return Category::Branch;
+   824→   824→    if (ins.is_jmp) return Category::Branch;
+   825→   825→    if (ins.is_ret) return Category::Stack;
+   826→   826→    if (ins.is_syscall) return Category::System;
+   827→   827→    std::string m = ins.mnemonic;
+   828→   828→    if (m == "push" || m == "pop" || m == "leave" || m == "enter") return Category::Stack;
+   829→   829→    if (m == "cmp" || m == "test") return Category::Compare;
+   830→   830→    if (m == "add" || m == "sub" || m == "inc" || m == "dec" || m == "mul" || m == "imul" || m == "div" || m == "idiv" || m == "neg" || m == "adc" || m == "sbb") return Category::Arithmetic;
+   831→   831→    if (m == "and" || m == "or" || m == "xor" || m == "not" || m == "shl" || m == "shr" || m == "sar" || m == "rol" || m == "ror" || m == "rcl" || m == "rcr") return Category::Logic;
+   832→   832→    if (m == "mov" || m == "movzx" || m == "movsx" || m == "lea" || m == "xchg" || m == "push" || m == "pop") return Category::Move;
+   833→   833→    if (m == "syscall" || m == "sysenter" || m == "sysexit" || m == "sysret" || m == "int" || m == "iret" || m == "cpuid" || m == "rdtsc" || m == "rdmsr" || m == "wrmsr" || m == "hlt") return Category::System;
+   834→   834→    return Category::Other;
+   835→   835→}
+   836→   836→
+   837→   837→} // namespace ndbg
+   838→   838→

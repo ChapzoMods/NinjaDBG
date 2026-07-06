@@ -1,5 +1,5 @@
 // NinjaDBG v1.0.2 - Anti-Detect Module (Stealth)
-// Closed Source - Free - by Chapzoo
+// Open Source (MIT) - by Chapzoo
 //
 // Implements techniques to hide NinjaDBG from processes that try to detect
 // debugger presence. On Linux the target's anti-debug routines typically:
