@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.0 - BinaryPatcher implementation
+// NinjaDBG v1.1.1 - BinaryPatcher implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "BinaryPatcher.h"
 #include <fstream>
@@ -253,20 +253,20 @@ int BinaryPatcher::applyPatch(u64 file_offset, PatchKind kind, size_t length,
             // For Jcc rel32 (6 bytes: 0F 8x xx xx xx xx): replace with
             //   JMP rel32 (5 bytes: E9 xx xx xx xx) + 1 NOP
             // IMPORTANT: Jcc rel32 is RIP-relative to RIP+6, JMP rel32 is
-            // RIP-relative to RIP+5. To land on the same target, decrement
-            // the 32-bit displacement by 1 (little-endian).
+            // RIP-relative to RIP+5. Since JMP's RIP is 1 byte earlier (5 < 6),
+            // to land on the same target, the displacement must INCREASE by 1.
             p.patched_bytes = p.original_bytes;
             if (length == 2) {
                 p.patched_bytes[0] = 0xEB;
             } else if (length == 6) {
                 p.patched_bytes[0] = 0xE9;
-                // Decrement the rel32 displacement by 1 to account for
+                // Increment the rel32 displacement by 1 to account for
                 // the 1-byte shorter instruction (5 vs 6 bytes).
                 u32 disp = (u32)p.original_bytes[2]
                          | ((u32)p.original_bytes[3] << 8)
                          | ((u32)p.original_bytes[4] << 16)
                          | ((u32)p.original_bytes[5] << 24);
-                disp -= 1;
+                disp += 1;
                 p.patched_bytes[1] = (u8)(disp & 0xFF);
                 p.patched_bytes[2] = (u8)((disp >> 8) & 0xFF);
                 p.patched_bytes[3] = (u8)((disp >> 16) & 0xFF);

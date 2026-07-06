@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.0 - HeadlessCLI implementation
+// NinjaDBG v1.1.1 - HeadlessCLI implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "HeadlessCLI.h"
 #include "WelcomeScreen.h"
@@ -35,9 +35,9 @@ void HeadlessCLI::printBanner() {
         " | |\\  | | |_| | | | (_| | | | |_| |\\___ \\ \n"
         " |_| \\_|_|\\__|_| |_|\\__,_|_|  \\___/|____) |\n"
         "\n"
-        "  v1.1.0 — Stealth Debugger  (Open Source (Apache-2.0) - by Chapzoo)\n"
+        "  v1.1.1 — Stealth Debugger  (Open Source (Apache-2.0) - by Chapzoo)\n"
         "  Headless CLI mode. Type 'help' for command list, 'quit' to exit.\n"
-        "  New in v1.1.0: decomp (native C decompilation via RetDec/angr)\n"
+        "  New in v1.1.1: decomp (native C decompilation via RetDec/angr)\n"
         "\n";
 }
 
@@ -108,7 +108,11 @@ void HeadlessCLI::execute(const std::string& line) {
     else if (cmd == "continue" || cmd == "cont" || cmd == "c") cmdContinue(args);
     else if (cmd == "step" || cmd == "s" || cmd == "stepi" || cmd == "si") cmdStep(args);
     else if (cmd == "next" || cmd == "n") cmdNext(args);
-    else if (cmd == "finish" || cmd == "fo") { /* step out */ }
+    else if (cmd == "finish" || cmd == "fo") {
+        if (dbg_.pid() == 0) { err("Not attached"); return; }
+        if (dbg_.stepOut()) out("Stepped out of current function");
+        else err("step-out failed: " + dbg_.lastError());
+    }
     else if (cmd == "break" || cmd == "b")  cmdBreak(args, false);
     else if (cmd == "tbreak" || cmd == "tb") cmdBreak(args, true);
     else if (cmd == "delete" || cmd == "d")  cmdDelete(args);
@@ -791,7 +795,7 @@ void HeadlessCLI::cmdTarget(const std::vector<std::string>& args) {
 }
 
 void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
-    out("NinjaDBG v1.1.0 CLI commands:\n"
+    out("NinjaDBG v1.1.1 CLI commands:\n"
         "  attach <pid>                  Attach to a running process\n"
         "  launch <bin> [args...]        Launch a new process under the debugger\n"
         "  detach                        Detach from the target\n"
@@ -813,14 +817,14 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
         "  decomp [addr] [max_bytes]     Native C decompilation via RetDec/angr\n"
         "  decomp file <bin> [addr]      Decompile whole file or one function\n"
         "  decomp <list|api|set>         Decompiler backend management\n"
-        "  pretty set <lang>             [v1.1.0] Set pretty printer language (c|cpp|rust|go|python)\n"
-        "  pretty cstring <addr>         [v1.1.0] Print C string at addr\n"
-        "  pretty cpp_string <addr>      [v1.1.0] Print std::string at addr\n"
-        "  pretty rust_string <addr>     [v1.1.0] Print Rust String at addr\n"
-        "  pretty go_string <addr>       [v1.1.0] Print Go string at addr\n"
-        "  pretty py_string <addr>       [v1.1.0] Print CPython str at addr\n"
-        "  pretty struct <addr> <desc>   [v1.1.0] Parse struct (e.g. i32,str,ptr)\n"
-        "  pretty <list|api>             [v1.1.0] Show printers / API docs\n"
+        "  pretty set <lang>             [v1.1.1] Set pretty printer language (c|cpp|rust|go|python)\n"
+        "  pretty cstring <addr>         [v1.1.1] Print C string at addr\n"
+        "  pretty cpp_string <addr>      [v1.1.1] Print std::string at addr\n"
+        "  pretty rust_string <addr>     [v1.1.1] Print Rust String at addr\n"
+        "  pretty go_string <addr>       [v1.1.1] Print Go string at addr\n"
+        "  pretty py_string <addr>       [v1.1.1] Print CPython str at addr\n"
+        "  pretty struct <addr> <desc>   [v1.1.1] Parse struct (e.g. i32,str,ptr)\n"
+        "  pretty <list|api>             [v1.1.1] Show printers / API docs\n"
         "  bt | backtrace                Show call stack\n"
         "  target <binary>               Load a binary for static patching\n"
         "  patch list                    List applied patches\n"

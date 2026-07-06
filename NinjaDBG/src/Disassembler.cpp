@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.0 - Disassembler implementation
+// NinjaDBG v1.1.1 - Disassembler implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "Disassembler.h"
 #include <cstring>
@@ -301,13 +301,15 @@ Disassembler::Instruction Disassembler::disassembleOne(addr_t address, const u8*
         static const char* mnems[8] = {"add","or","adc","sbb","and","sub","xor","cmp"};
         int idx = (op >> 3) & 7;
         mnem = mnems[idx];
-        bool is_mem_dir = (op & 6) == 0;     // 00/08/10/18/20/28/30/38: r/m8, r8
-        bool is_mem = (op & 1) == 0;
-        int dir_size = is_mem_dir ? 1 : operand_size;
+        // Bit 0 of opcode selects size: 0 = 8-bit, 1 = operand-size (16/32/64)
+        bool is_8bit = (op & 1) == 0;
+        // Bit 1 of opcode selects direction: 0 = r/m, reg ; 1 = reg, r/m
+        bool mem_first = (op & 2) == 0;
+        int dir_size = is_8bit ? 1 : operand_size;
         needs_modrm = true;
         if (!parseModRM(s, true)) { ins.length = 0; return ins; }
         std::string mem = formatModRM(s, dir_size);
-        if (is_mem) {
+        if (mem_first) {
             snprintf(ops, sizeof(ops), "%s, %s", mem.c_str(), reg_field(dir_size));
         } else {
             snprintf(ops, sizeof(ops), "%s, %s", reg_field(dir_size), mem.c_str());
@@ -380,8 +382,8 @@ Disassembler::Instruction Disassembler::disassembleOne(addr_t address, const u8*
     }
     else if (op >= 0x40 && op <= 0x47) { mnem = "inc"; snprintf(ops, sizeof(ops), "%s", reg32(op - 0x40)); }
     else if (op >= 0x48 && op <= 0x4F) { mnem = "dec"; snprintf(ops, sizeof(ops), "%s", reg32(op - 0x48)); }
-    else if (op == 0xA8) { mnem = "test"; imm_bytes = operand_size == 8 ? 8 : (operand_size == 2 ? 2 : 4); if (parseImmediate(s, imm_bytes)) snprintf(ops, sizeof(ops), "%s, 0x%llx", operand_size==8?"rax":"eax", (unsigned long long)s.imm); }
-    else if (op == 0xA9) { mnem = "test"; imm_bytes = operand_size == 8 ? 8 : (operand_size == 2 ? 2 : 4); if (parseImmediate(s, imm_bytes)) snprintf(ops, sizeof(ops), "%s, 0x%llx", operand_size==8?"rax":"eax", (unsigned long long)s.imm); }
+    else if (op == 0xA8) { mnem = "test"; imm_bytes = 1; if (parseImmediate(s, 1)) snprintf(ops, sizeof(ops), "al, 0x%02llx", (unsigned long long)s.imm); }
+    else if (op == 0xA9) { mnem = "test"; imm_bytes = (operand_size == 2) ? 2 : 4; if (parseImmediate(s, imm_bytes)) snprintf(ops, sizeof(ops), "%s, 0x%llx", operand_size==8?"rax":(operand_size==2?"ax":"eax"), (unsigned long long)s.imm); }
     else if (op == 0xB8 || op == 0xB9 || op == 0xBA || op == 0xBB ||
              op == 0xBC || op == 0xBD || op == 0xBE || op == 0xBF) {
         mnem = "mov";
@@ -551,8 +553,8 @@ Disassembler::Instruction Disassembler::disassembleOne(addr_t address, const u8*
     else if (op == 0x84) { mnem = "test"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, 1); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(1)); } }
     else if (op == 0x86) { mnem = "xchg"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, 1); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(1)); } }
     else if (op == 0x87) { mnem = "xchg"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, operand_size); snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), reg_field(operand_size)); } }
-    else if (op == 0x8E) { mnem = "mov"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, 2); static const char* sregs[] = {"es","cs","ss","ds","fs","gs"}; snprintf(ops, sizeof(ops), "%s, %s", sregs[(s.modrm>>3)&7], m.c_str()); } }
-    else if (op == 0x8C) { mnem = "mov"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, 2); static const char* sregs[] = {"es","cs","ss","ds","fs","gs"}; snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), sregs[(s.modrm>>3)&7]); } }
+    else if (op == 0x8E) { mnem = "mov"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, 2); static const char* sregs[] = {"es","cs","ss","ds","fs","gs","?","?"}; int sri = (s.modrm>>3)&7; snprintf(ops, sizeof(ops), "%s, %s", sregs[sri], m.c_str()); } }
+    else if (op == 0x8C) { mnem = "mov"; needs_modrm = true; if (parseModRM(s, true)) { auto m = formatModRM(s, 2); static const char* sregs[] = {"es","cs","ss","ds","fs","gs","?","?"}; int sri = (s.modrm>>3)&7; snprintf(ops, sizeof(ops), "%s, %s", m.c_str(), sregs[sri]); } }
     else if (op == 0xF4) { mnem = "hlt"; }
     else if (op == 0xF8) { mnem = "clc"; }
     else if (op == 0xF9) { mnem = "stc"; }
@@ -725,7 +727,7 @@ Disassembler::Instruction Disassembler::disassembleOne(addr_t address, const u8*
             if (parseModRM(s, true)) {
                 int sub = (s.modrm >> 3) & 7;
                 static const char* g8[] = {"","","bt","bts","btr","btc"};
-                mnem = sub >= 2 ? g8[sub] : "???";
+                mnem = (sub >= 2 && sub <= 5) ? g8[sub] : "???";
                 auto m = formatModRM(s, operand_size);
                 imm_bytes = 1;
                 if (parseImmediate(s, 1))

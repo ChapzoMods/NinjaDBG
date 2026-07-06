@@ -1,5 +1,5 @@
-     1→// NinjaDBG v1.0.5 - ScriptEngine implementation
-     2→// Closed Source - Free - by Chapzoo
+     1→// NinjaDBG v1.1.0 - ScriptEngine implementation
+     2→// Open Source (Apache-2.0) - by Chapzoo
      3→#include "ScriptEngine.h"
      4→#include <iostream>
      5→#include <fstream>

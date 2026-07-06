@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.0 - Decompiler implementation (RetDec / angr backend)
+// NinjaDBG v1.1.1 - Decompiler implementation (RetDec / angr backend)
 // Open Source (Apache-2.0) - by Chapzoo
 #include "Decompiler.h"
 #include <iostream>
@@ -627,7 +627,7 @@ std::vector<Decompiler::FunctionInfo> Decompiler::listFunctions(const std::strin
 
 std::string Decompiler::apiDocs() {
     return R"DOCS(
-NinjaDBG v1.1.0 Decompilation API
+NinjaDBG v1.1.1 Decompilation API
 ==================================
 
 NinjaDBG integrates Avast's RetDec decompiler (and optionally angr) to

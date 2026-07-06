@@ -22,3 +22,7 @@ Thumbs.db
 # Secrets - never commit tokens
 *.token
 .env
+build/obj/
+build/ninjadb
+build/target_test
+build/screenshot

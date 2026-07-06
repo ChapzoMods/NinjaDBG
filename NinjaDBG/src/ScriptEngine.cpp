@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.0 - ScriptEngine implementation
+// NinjaDBG v1.1.1 - ScriptEngine implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "ScriptEngine.h"
 #include <iostream>
@@ -552,6 +552,11 @@ std::string ScriptEngine::handleRequest(const std::string& json_req) {
     if (cmd == "continue")       return apiContinue(args);
     if (cmd == "step")           return apiStep(args);
     if (cmd == "breakpoint")     return apiBreakpoint(args);
+    if (cmd == "delete") {
+        if (args.empty()) return jsonError("delete requires id");
+        int id = atoi(args[0].c_str());
+        return dbg_.removeBreakpoint(id) ? jsonOkTrue() : jsonError(dbg_.lastError());
+    }
     if (cmd == "read_bytes")     return apiReadBytes(args);
     if (cmd == "write_bytes")    return apiWriteBytes(args);
     if (cmd == "read_register")  return apiReadRegister(args);

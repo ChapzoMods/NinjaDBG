@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.2 - DebuggerCore implementation
+// NinjaDBG v1.1.1 - DebuggerCore implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "DebuggerCore.h"
 #include "AntiDetect.h"
@@ -187,6 +187,22 @@ bool DebuggerCore::waitForStop(int& signal_out, bool& exited_out, int& exit_code
                     writeRegisters(r);
                     bp->hit_count++;
                     uninstallBp(*bp);
+
+                    // v1.1.1: Check conditional breakpoint
+                    if (!bp->condition.empty() && !checkBreakpointCondition(bp->id)) {
+                        // Condition is false — reinstall bp and continue automatically
+                        installBp(*bp);
+                        // Re-continue and wait for next stop
+                        if (ptrace(PTRACE_CONT, pid_, nullptr, nullptr) != -1) {
+                            state_ = RunState::Running;
+                            return waitForStop(signal_out, exited_out, exit_code_out);
+                        }
+                    }
+
+                    // v1.1.1: Auto-remove temporary breakpoints
+                    if (bp->temporary) {
+                        bps_.erase(bp->id);
+                    }
                 }
             }
         }
@@ -377,7 +393,7 @@ std::vector<MemoryRegion> DebuggerCore::readMaps() {
         if (n >= 5) r.path = path;
         out.push_back(r);
     }
-    maps_cache_ = out;  // v1.1.0: cache for backtrace symbol resolution
+    maps_cache_ = out;  // v1.1.1: cache for backtrace symbol resolution
     return out;
 }
 
@@ -531,7 +547,7 @@ bool DebuggerCore::pokeByte(addr_t addr, u8 v) {
     return ptrace(PTRACE_POKEDATA, pid_, (void*)addr, (void*)word) != -1;
 }
 
-// ===== v1.1.0 advanced features =====
+// ===== v1.1.1 advanced features =====
 
 int DebuggerCore::addConditionalBreakpoint(addr_t addr, const std::string& condition,
                                             const std::string& label) {

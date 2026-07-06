@@ -1,5 +1,5 @@
-// NinjaDBG v1.1.0 - WelcomeScreen implementation
-// Open Source (MIT License) - by Chapzoo
+// NinjaDBG v1.1.1 - WelcomeScreen implementation
+// Open Source (Apache-2.0) - by Chapzoo
 #include "WelcomeScreen.h"
 #include <fstream>
 #include <sstream>
@@ -30,7 +30,7 @@ bool WelcomeScreen::isEulaAccepted() {
     if (!f.good()) return false;
     std::string line;
     std::getline(f, line);
-    return line == "1.1.0";
+    return line == "1.1.1";
 }
 
 bool WelcomeScreen::acceptEula() {
@@ -39,14 +39,14 @@ bool WelcomeScreen::acceptEula() {
     std::system(cmd.c_str());
     std::ofstream f(eulaPath());
     if (!f) return false;
-    f << "1.1.0\n";
+    f << "1.1.1\n";
     f.close();
     return true;
 }
 
 std::string WelcomeScreen::welcomeMessage() {
     return R"WELCOME(
-Welcome to NinjaDBG v1.1.0 — Stealth Debugger
+Welcome to NinjaDBG v1.1.1 — Stealth Debugger
 
 NinjaDBG is an OPEN SOURCE (Apache-2.0) native debugger for Linux x86-64
 with experimental support for Windows (PE) and macOS (Mach-O) binaries.
@@ -67,17 +67,17 @@ Full feature list:
   - Lua + Python scripting via JSON-RPC subprocess bridge
   - Native C decompilation via RetDec + angr backends
   - Pretty printers: C strings, std::string, Rust String, Go string, Python str, structs
-  - Welcome screen + MIT license
+  - Welcome screen + Apache-2.0 license
 
-IMPORTANT: The graphical interface is EXPERIMENTAL and still under active
-development. For production use, prefer the headless CLI (run `ninjadb --cli`).
+IMPORTANT: NinjaDBG v1.1.1 is CLI-only. The GUI was removed in v1.1.1.
+For the full feature set, use the headless CLI (run `ninjadb`).
 )WELCOME";
 }
 
 std::string WelcomeScreen::eulaText() {
     return R"EULA(
 ==========================================================================
-   NinjaDBG v1.1.0 — Apache License 2.0 (Open Source)
+   NinjaDBG v1.1.1 — Apache License 2.0 (Open Source)
 ==========================================================================
 
 Apache License
@@ -141,11 +141,11 @@ KEY TERMS (summary — see full License at http://www.apache.org/licenses/):
      (c) is NOT liable for system instability, data loss, or security
          incidents resulting from loading the module.
 
-3. EXPERIMENTAL FEATURES
+3. CLI-ONLY
 
-   The graphical interface is EXPERIMENTAL and still under development.
-   Bugs, layout issues, and missing features are expected. For production
-   use, prefer the headless CLI.
+   The GUI was removed in v1.1.1. NinjaDBG is now CLI-only.
+   All features are exposed via the headless CLI. For production
+   use, the CLI is the recommended and only interface.
 
 4. NO WARRANTY
 

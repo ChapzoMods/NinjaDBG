@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.0 - Welcome screen + EULA
+// NinjaDBG v1.1.1 - Welcome screen + EULA
 // Open Source (Apache-2.0) - by Chapzoo
 //
 // First-run experience: a welcome screen introducing NinjaDBG, followed by

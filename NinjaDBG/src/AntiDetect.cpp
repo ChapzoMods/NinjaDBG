@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.2 - AntiDetect implementation
+// NinjaDBG v1.1.1 - AntiDetect implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "AntiDetect.h"
 #include <fstream>
@@ -104,76 +104,55 @@ std::string AntiDetect::report() const {
 std::string AntiDetect::buildPreloadPayload() {
     if (!preload_path_.empty()) return preload_path_;
 
-    // Generate a small C source for the preload .so that hooks open()/read()
-    // to mask TracerPid: in /proc/self/status. The .so is compiled on demand.
-    preload_path_ = "/home/z/my-project/NinjaDBG/build/libninjastealth.so";
-
-    std::string src_path = "/home/z/my-project/NinjaDBG/scripts/ninjastealth.c";
-    std::ofstream s(src_path);
-    s << R"STEALTH(
-// NinjaDBG stealth preload payload — masks TracerPid in /proc/self/status
-#define _GNU_SOURCE
-#include <dlfcn.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <stdarg.h>
-#include <sys/types.h>
-
-static int (*real_open)(const char*, int, ...) = NULL;
-static ssize_t (*real_read)(int, void*, size_t) = NULL;
-static int status_fd = -1;
-
-static void init_real(void) {
-    if (!real_open)  real_open  = dlsym(RTLD_NEXT, "open");
-    if (!real_read)  real_read  = dlsym(RTLD_NEXT, "read");
-}
-
-int open(const char* path, int flags, ...) {
-    init_real();
-    mode_t m = 0;
-    if (flags & O_CREAT) {
-        va_list ap; va_start(ap, flags);
-        m = va_arg(ap, mode_t); va_end(ap);
-    }
-    int fd = real_open(path, flags, m);
-    if (path && strstr(path, "/proc/self/status")) {
-        status_fd = fd;  // remember this fd
-    }
-    return fd;
-}
-
-ssize_t read(int fd, void* buf, size_t n) {
-    init_real();
-    ssize_t r = real_read(fd, buf, n);
-    if (fd == status_fd && r > 0) {
-        // Mask "TracerPid:\tNNNN" lines
-        char* p = (char*)buf;
-        char* tracer = strstr(p, "TracerPid:");
-        if (tracer) {
-            char* nl = strchr(tracer, '\n');
-            if (nl) {
-                // Replace the line with "TracerPid:\t0\n"
-                const char* fake = "TracerPid:\t0\n";
-                size_t fake_len = strlen(fake);
-                size_t old_len = nl - tracer + 1;
-                if (fake_len <= old_len) {
-                    memcpy(tracer, fake, fake_len);
-                    memmove(tracer + fake_len, nl + 1, p + r - nl - 1);
-                    r -= (old_len - fake_len);
-                }
+    // v1.1.1: The stealth payload source is maintained as a hand-written file
+    // at scripts/ninjastealth.c. We do NOT regenerate it (which would destroy
+    // the carefully maintained hooks). We only compile it.
+    //
+    // Resolve paths relative to the executable to avoid hardcoded absolute paths.
+    // Try /proc/self/exe first, then fall back to a compile-time default.
+    std::string base_dir;
+    char exe_path[4096];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len > 0) {
+        exe_path[len] = 0;
+        std::string ep(exe_path);
+        size_t slash = ep.rfind('/');
+        if (slash != std::string::npos) {
+            base_dir = ep.substr(0, slash);
+            // Go up one level (from build/ to project root)
+            size_t slash2 = base_dir.rfind('/');
+            if (slash2 != std::string::npos) {
+                base_dir = base_dir.substr(0, slash2);
             }
         }
     }
-    return r;
-}
-)STEALTH";
-    s.close();
+    if (base_dir.empty()) {
+        base_dir = ".";  // fallback: current working directory
+    }
 
-    // Compile it (caller is expected to run this)
-    std::string cmd = "gcc -shared -fPIC -O2 -ldl -o " + preload_path_ + " " + src_path;
-    system(cmd.c_str());
+    std::string src_path = base_dir + "/scripts/ninjastealth.c";
+    preload_path_ = base_dir + "/build/libninjastealth.so";
+
+    // Check that the source file exists
+    std::ifstream check(src_path);
+    if (!check.good()) {
+        // Source not found — can't build
+        return "";
+    }
+    check.close();
+
+    // Create build directory if needed
+    std::string mkdir_cmd = "mkdir -p " + base_dir + "/build";
+    system(mkdir_cmd.c_str());
+
+    // Compile the payload
+    std::string cmd = "gcc -shared -fPIC -O2 -ldl -o " + preload_path_ + " " + src_path + " 2>/dev/null";
+    int rc = system(cmd.c_str());
+    if (rc != 0) {
+        // Compilation failed
+        preload_path_.clear();
+        return "";
+    }
     return preload_path_;
 }
 
