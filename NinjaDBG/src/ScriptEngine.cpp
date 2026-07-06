@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.1 - ScriptEngine implementation
+// NinjaDBG v1.1.2 - ScriptEngine implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "ScriptEngine.h"
 #include <iostream>
@@ -556,6 +556,23 @@ std::string ScriptEngine::handleRequest(const std::string& json_req) {
         if (args.empty()) return jsonError("delete requires id");
         int id = atoi(args[0].c_str());
         return dbg_.removeBreakpoint(id) ? jsonOkTrue() : jsonError(dbg_.lastError());
+    }
+    if (cmd == "kill") {
+        return dbg_.kill() ? jsonOkTrue() : jsonError(dbg_.lastError());
+    }
+    if (cmd == "tbreak") {
+        if (args.empty()) return jsonError("tbreak requires addr");
+        addr_t a = strtoull(args[0].c_str(), nullptr, 0);
+        int id = dbg_.addTempBreakpoint(a);
+        if (id < 0) return jsonError(dbg_.lastError());
+        return jsonOk(jsonNumber((u64)id));
+    }
+    if (cmd == "breakpoint_cond") {
+        if (args.size() < 2) return jsonError("breakpoint_cond requires addr and condition");
+        addr_t a = strtoull(args[0].c_str(), nullptr, 0);
+        int id = dbg_.addConditionalBreakpoint(a, args[1]);
+        if (id < 0) return jsonError(dbg_.lastError());
+        return jsonOk(jsonNumber((u64)id));
     }
     if (cmd == "read_bytes")     return apiReadBytes(args);
     if (cmd == "write_bytes")    return apiWriteBytes(args);

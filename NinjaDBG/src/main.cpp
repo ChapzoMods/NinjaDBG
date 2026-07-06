@@ -1,7 +1,7 @@
-// NinjaDBG v1.1.1 - Entry point
+// NinjaDBG v1.1.2 - Entry point
 // Open Source (Apache-2.0) - by Chapzoo
 //
-// NinjaDBG v1.1.1 is CLI-only. The GUI was removed in v1.1.1.
+// NinjaDBG v1.1.2 is CLI-only. The GUI was removed in v1.1.2.
 //
 // Usage:
 //   ninjadb                        Launch headless CLI (default)
@@ -28,14 +28,14 @@ int main(int argc, char** argv) {
 
     if (show_help) {
         std::cout <<
-            "NinjaDBG v1.1.1 - Stealth Debugger\n"
+            "NinjaDBG v1.1.2 - Stealth Debugger\n"
             "Open Source (Apache-2.0) - Created by Chapzoo\n\n"
             "Usage:\n"
             "  ninjadb                        Launch headless CLI (interactive REPL)\n"
             "  ninjadb -c \"commands;quit\"    Execute commands in batch mode\n"
             "  ninjadb --no-eula-check        Skip EULA acceptance prompt\n"
             "  ninjadb --help                 Show this help\n\n"
-            "The GUI was removed in v1.1.1. The headless CLI exposes the full\n"
+            "The GUI was removed in v1.1.2. The headless CLI exposes the full\n"
             "feature set: disassembly, decompilation, pretty printers, scripting,\n"
             "binary patching, kernel stealth, and more.\n\n"
             "Run 'ninjadb' then type 'help' for the command list.\n";

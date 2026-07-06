@@ -215,5 +215,5 @@
    - The optional kernel module (ninja_stealth.ko) is unsigned and may
      destabilize your system. Load it at your own risk.
 
-   - The graphical interface is EXPERIMENTAL and still under development.
-     For production use, prefer the headless CLI (`ninjadb --cli`).
+   - NinjaDBG is CLI-only. The GUI was removed in v1.1.1.
+     For production use, use the headless CLI (`ninjadb`).

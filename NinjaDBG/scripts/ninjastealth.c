@@ -1,5 +1,5 @@
 /*
- * libninjastealth.so - NinjaDBG v1.1.1 Preload Stealth Payload
+ * libninjastealth.so - NinjaDBG v1.1.2 Preload Stealth Payload
  * Open Source (Apache-2.0) - by Chapzoo
  *
  * This shared library is injected into the target process via LD_PRELOAD
@@ -44,9 +44,13 @@ typedef int     (*open_fn)(const char*, int, ...);
 typedef int     (*openat_fn)(int, const char*, int, ...);
 typedef ssize_t (*read_fn)(int, void*, size_t);
 typedef ssize_t (*pread_fn)(int, void*, size_t, off_t);
+typedef ssize_t (*pread64_fn)(int, void*, size_t, off_t);
 typedef ssize_t (*readv_fn)(int, const struct iovec*, int);
+typedef int     (*close_fn)(int);
 typedef FILE*   (*fopen_fn)(const char*, const char*);
 typedef size_t  (*fread_fn)(void*, size_t, size_t, FILE*);
+typedef char*   (*fgets_fn)(char*, int, FILE*);
+typedef ssize_t (*getline_fn)(char**, size_t*, FILE*);
 typedef long    (*ptrace_fn)(enum __ptrace_request, ...);
 typedef int     (*prctl_fn)(int, ...);
 typedef int     (*clock_gettime_fn)(clockid_t, struct timespec*);
@@ -57,9 +61,13 @@ static open_fn          real_open64    = NULL;
 static openat_fn        real_openat    = NULL;
 static read_fn          real_read      = NULL;
 static pread_fn         real_pread     = NULL;
+static pread64_fn       real_pread64   = NULL;
 static readv_fn         real_readv     = NULL;
+static close_fn         real_close     = NULL;
 static fopen_fn         real_fopen     = NULL;
 static fread_fn         real_fread     = NULL;
+static fgets_fn         real_fgets     = NULL;
+static getline_fn       real_getline   = NULL;
 static ptrace_fn        real_ptrace    = NULL;
 static prctl_fn         real_prctl     = NULL;
 static clock_gettime_fn real_clock_gettime = NULL;
@@ -87,9 +95,13 @@ static void init_real(void) {
     if (!real_openat)    real_openat    = (openat_fn)dlsym(RTLD_NEXT, "openat");
     if (!real_read)      real_read      = (read_fn)dlsym(RTLD_NEXT, "read");
     if (!real_pread)     real_pread     = (pread_fn)dlsym(RTLD_NEXT, "pread");
+    if (!real_pread64)   real_pread64   = (pread64_fn)dlsym(RTLD_NEXT, "pread64");
     if (!real_readv)     real_readv     = (readv_fn)dlsym(RTLD_NEXT, "readv");
+    if (!real_close)     real_close     = (close_fn)dlsym(RTLD_NEXT, "close");
     if (!real_fopen)     real_fopen     = (fopen_fn)dlsym(RTLD_NEXT, "fopen");
     if (!real_fread)     real_fread     = (fread_fn)dlsym(RTLD_NEXT, "fread");
+    if (!real_fgets)     real_fgets     = (fgets_fn)dlsym(RTLD_NEXT, "fgets");
+    if (!real_getline)   real_getline   = (getline_fn)dlsym(RTLD_NEXT, "getline");
     if (!real_ptrace)    real_ptrace    = (ptrace_fn)dlsym(RTLD_NEXT, "ptrace");
     if (!real_prctl)     real_prctl     = (prctl_fn)dlsym(RTLD_NEXT, "prctl");
     if (!real_clock_gettime) real_clock_gettime = (clock_gettime_fn)dlsym(RTLD_NEXT, "clock_gettime");
@@ -490,6 +502,94 @@ int prctl(int option, ...) {
         return 1;
     }
     return result;
+}
+
+/* ---- Hook: close ---- */
+int close(int fd) {
+    init_real();
+    unregister_stealth_fd(fd);
+    if (!real_close) {
+        errno = EBADF;
+        return -1;
+    }
+    return real_close(fd);
+}
+
+/* ---- Hook: pread64 ---- */
+ssize_t pread64(int fd, void* buf, size_t n, off_t offset) {
+    init_real();
+    if (!real_pread64) {
+        // pread64 might not exist as a separate symbol; fall back to pread
+        return pread(fd, buf, n, offset);
+    }
+    ssize_t r = real_pread64(fd, buf, n, offset);
+    if (r > 0) {
+        int type = get_stealth_type(fd);
+        if (type > 0) {
+            switch (type - 1) {
+                case 0: rewrite_status((char*)buf, &r); break;
+                case 1: rewrite_wchan((char*)buf, &r); break;
+                case 2: rewrite_syscall((char*)buf, &r); break;
+                case 3: rewrite_stat((char*)buf, &r); break;
+                case 4: rewrite_comm((char*)buf, &r); break;
+                case 5: rewrite_maps((char*)buf, &r); break;
+            }
+        }
+    }
+    return r;
+}
+
+/* ---- Hook: fgets ---- */
+char* fgets(char* s, int n, FILE* stream) {
+    init_real();
+    if (!real_fgets) return NULL;
+    char* result = real_fgets(s, n, stream);
+    if (result) {
+        int fd = fileno(stream);
+        if (fd >= 0) {
+            int type = get_stealth_type(fd);
+            if (type > 0) {
+                ssize_t r = strlen(s);
+                switch (type - 1) {
+                    case 0: rewrite_status(s, &r); break;
+                    case 1: rewrite_wchan(s, &r); break;
+                    case 2: rewrite_syscall(s, &r); break;
+                    case 3: rewrite_stat(s, &r); break;
+                    case 4: rewrite_comm(s, &r); break;
+                    case 5: rewrite_maps(s, &r); break;
+                }
+                s[r] = '\0';
+            }
+        }
+    }
+    return result;
+}
+
+/* ---- Hook: getline ---- */
+ssize_t getline(char** lineptr, size_t* n, FILE* stream) {
+    init_real();
+    if (!real_getline) return -1;
+    ssize_t r = real_getline(lineptr, n, stream);
+    if (r > 0 && lineptr && *lineptr) {
+        int fd = fileno(stream);
+        if (fd >= 0) {
+            int type = get_stealth_type(fd);
+            if (type > 0) {
+                ssize_t len = r;
+                switch (type - 1) {
+                    case 0: rewrite_status(*lineptr, &len); break;
+                    case 1: rewrite_wchan(*lineptr, &len); break;
+                    case 2: rewrite_syscall(*lineptr, &len); break;
+                    case 3: rewrite_stat(*lineptr, &len); break;
+                    case 4: rewrite_comm(*lineptr, &len); break;
+                    case 5: rewrite_maps(*lineptr, &len); break;
+                }
+                (*lineptr)[len] = '\0';
+                r = len;
+            }
+        }
+    }
+    return r;
 }
 
 /* ---- Constructor: runs at library load time ---- */

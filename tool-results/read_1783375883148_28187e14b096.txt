@@ -1,0 +1,776 @@
+     1→// NinjaDBG v1.1.1 - DebuggerCore implementation
+     2→// Open Source (Apache-2.0) - by Chapzoo
+     3→#include "DebuggerCore.h"
+     4→#include "AntiDetect.h"
+     5→#include <sys/ptrace.h>
+     6→#include <sys/user.h>
+     7→#include <sys/reg.h>
+     8→#include <sys/wait.h>
+     9→#include <sys/uio.h>
+    10→#include <sys/resource.h>
+    11→#include <sys/stat.h>
+    12→#include <signal.h>
+    13→#include <unistd.h>
+    14→#include <fcntl.h>
+    15→#include <stdio.h>
+    16→#include <dirent.h>
+    17→#include <pwd.h>
+    18→#include <fstream>
+    19→#include <sstream>
+    20→#include <cstring>
+    21→#include <algorithm>
+    22→#include <chrono>
+    23→
+    24→namespace ndbg {
+    25→
+    26→DebuggerCore::DebuggerCore() {}
+    27→DebuggerCore::~DebuggerCore() {
+    28→    if (state_ == RunState::Attached || state_ == RunState::Stopped) {
+    29→        detach();
+    30→    }
+    31→}
+    32→
+    33→bool DebuggerCore::attach(pid_t pid) {
+    34→    if (pid_ != 0) detach();
+    35→    if (ptrace(PTRACE_ATTACH, pid, nullptr, nullptr) == -1) {
+    36→        last_error_ = "PTRACE_ATTACH failed: ";
+    37→        last_error_ += std::strerror(errno);
+    38→        return false;
+    39→    }
+    40→    int status;
+    41→    if (waitpid(pid, &status, 0) == -1) {
+    42→        last_error_ = "waitpid failed";
+    43→        // Detach to avoid leaking the tracee
+    44→        ptrace(PTRACE_DETACH, pid, nullptr, nullptr);
+    45→        return false;
+    46→    }
+    47→    pid_ = pid;
+    48→    state_ = RunState::Stopped;
+    49→    return true;
+    50→}
+    51→
+    52→bool DebuggerCore::attachByLaunch(const std::string& path, const std::vector<std::string>& args) {
+    53→    if (pid_ != 0) detach();
+    54→
+    55→    pid_t child = fork();
+    56→    if (child == 0) {
+    57→        // child
+    58→        ptrace(PTRACE_TRACEME, 0, nullptr, nullptr);
+    59→        // stop self so parent can configure options before exec
+    60→        raise(SIGSTOP);
+    61→
+    62→        // build argv
+    63→        std::vector<const char*> argv;
+    64→        argv.push_back(path.c_str());
+    65→        for (auto& a : args) argv.push_back(a.c_str());
+    66→        argv.push_back(nullptr);
+    67→
+    68→        execv(path.c_str(), const_cast<char* const*>(argv.data()));
+    69→        perror("execv");
+    70→        _exit(127);
+    71→    }
+    72→    if (child == -1) {
+    73→        last_error_ = "fork failed";
+    74→        return false;
+    75→    }
+    76→    int status;
+    77→    waitpid(child, &status, 0);  // wait for SIGSTOP
+    78→
+    79→    pid_ = child;
+    80→    state_ = RunState::Stopped;
+    81→
+    82→    // Set ptrace options: TRACECLONE/FORK/EXEC to follow children,
+    83→    // and allow killing the child if our parent dies.
+    84→    long opts = PTRACE_O_TRACECLONE | PTRACE_O_TRACEFORK |
+    85→                PTRACE_O_TRACEEXEC  | PTRACE_O_TRACEEXIT |
+    86→                PTRACE_O_EXITKILL;
+    87→    ptrace(PTRACE_SETOPTIONS, pid_, nullptr, (void*)opts);
+    88→    return true;
+    89→}
+    90→
+    91→bool DebuggerCore::detach() {
+    92→    if (pid_ == 0) return false;
+    93→    uninstallAllBps();
+    94→    ptrace(PTRACE_DETACH, pid_, nullptr, nullptr);
+    95→    pid_ = 0;
+    96→    state_ = RunState::Idle;
+    97→    return true;
+    98→}
+    99→
+   100→bool DebuggerCore::kill() {
+   101→    if (pid_ == 0) return false;
+   102→    // PTRACE_KILL is deprecated and a no-op on Linux >= 3.x.
+   103→    // Use SIGKILL via kill(2) instead, then reap the zombie.
+   104→    uninstallAllBps();
+   105→    ::kill(pid_, SIGKILL);
+   106→    int status;
+   107→    // Use WNOHANG loop to avoid blocking forever if the child is stuck
+   108→    for (int i = 0; i < 50; i++) {
+   109→        pid_t r = waitpid(pid_, &status, WNOHANG);
+   110→        if (r == pid_ || r == -1) break;
+   111→        usleep(100000);  // 100ms
+   112→    }
+   113→    pid_ = 0;
+   114→    state_ = RunState::Idle;
+   115→    return true;
+   116→}
+   117→
+   118→bool DebuggerCore::step() {
+   119→    if (pid_ == 0) return false;
+   120→    if (ptrace(PTRACE_SINGLESTEP, pid_, nullptr, nullptr) == -1) {
+   121→        last_error_ = "SINGLESTEP failed";
+   122→        return false;
+   123→    }
+   124→    int status; waitpid(pid_, &status, 0);
+   125→    state_ = RunState::Stopped;
+   126→    return true;
+   127→}
+   128→
+   129→bool DebuggerCore::cont() {
+   130→    if (pid_ == 0) return false;
+   131→    installAllBps();
+   132→    if (ptrace(PTRACE_CONT, pid_, nullptr, nullptr) == -1) {
+   133→        last_error_ = "PTRACE_CONT failed";
+   134→        return false;
+   135→    }
+   136→    state_ = RunState::Running;
+   137→    return true;
+   138→}
+   139→
+   140→bool DebuggerCore::contUntil(addr_t addr) {
+   141→    // Set a temporary breakpoint at addr
+   142→    int id = addBreakpoint(addr, false, "_temp_contUntil");
+   143→    if (id < 0) return false;
+   144→    cont();
+   145→    int sig; bool ex; int code;
+   146→    waitForStop(sig, ex, code);
+   147→    removeBreakpoint(id);
+   148→    return true;
+   149→}
+   150→
+   151→bool DebuggerCore::stop() {
+   152→    if (pid_ == 0) return false;
+   153→    ::kill(pid_, SIGSTOP);
+   154→    return true;
+   155→}
+   156→
+   157→bool DebuggerCore::waitForStop(int& signal_out, bool& exited_out, int& exit_code_out) {
+   158→    exited_out = false;
+   159→    signal_out = 0;
+   160→    if (pid_ == 0) return false;
+   161→    int status;
+   162→    if (waitpid(pid_, &status, 0) == -1) return false;
+   163→
+   164→    if (WIFEXITED(status)) {
+   165→        exited_out = true;
+   166→        exit_code_out = WEXITSTATUS(status);
+   167→        state_ = RunState::Exited;
+   168→        return true;
+   169→    }
+   170→    if (WIFSIGNALED(status)) {
+   171→        exited_out = true;
+   172→        exit_code_out = -WTERMSIG(status);
+   173→        state_ = RunState::Exited;
+   174→        return true;
+   175→    }
+   176→    if (WIFSTOPPED(status)) {
+   177→        signal_out = WSTOPSIG(status);
+   178→        // If we stopped at a SIGTRAP, check if it's our breakpoint
+   179→        if (signal_out == SIGTRAP) {
+   180→            RegisterSet r;
+   181→            if (readRegisters(r)) {
+   182→                addr_t bp_addr = r.rip - 1;
+   183→                Breakpoint* bp = findBreakpoint(bp_addr);
+   184→                if (bp) {
+   185→                    // Rewind RIP, increment hit count
+   186→                    r.rip = bp_addr;
+   187→                    writeRegisters(r);
+   188→                    bp->hit_count++;
+   189→                    uninstallBp(*bp);
+   190→
+   191→                    // v1.1.1: Check conditional breakpoint
+   192→                    if (!bp->condition.empty() && !checkBreakpointCondition(bp->id)) {
+   193→                        // Condition is false — reinstall bp and continue automatically
+   194→                        installBp(*bp);
+   195→                        // Re-continue and wait for next stop
+   196→                        if (ptrace(PTRACE_CONT, pid_, nullptr, nullptr) != -1) {
+   197→                            state_ = RunState::Running;
+   198→                            return waitForStop(signal_out, exited_out, exit_code_out);
+   199→                        }
+   200→                    }
+   201→
+   202→                    // v1.1.1: Auto-remove temporary breakpoints
+   203→                    if (bp->temporary) {
+   204→                        bps_.erase(bp->id);
+   205→                    }
+   206→                }
+   207→            }
+   208→        }
+   209→        state_ = RunState::Stopped;
+   210→        return true;
+   211→    }
+   212→    return false;
+   213→}
+   214→
+   215→// --- Breakpoints ---
+   216→int DebuggerCore::addBreakpoint(addr_t addr, bool hardware, const std::string& label) {
+   217→    Breakpoint bp;
+   218→    bp.id = next_bp_id_++;
+   219→    bp.address = addr;
+   220→    bp.hardware = hardware;
+   221→    bp.label = label.empty() ? ("bp_" + std::to_string(bp.id)) : label;
+   222→    if (!hardware) {
+   223→        // Read the original byte, save it, write 0xCC
+   224→        u8 saved = 0;
+   225→        if (!setSwBreakpoint(addr, &saved)) return -1;
+   226→        bp.original_byte = saved;
+   227→    } else {
+   228→        // TODO: program DR0-DR3 (would need PTRACE_POKEUSER to debug registers).
+   229→        // For demonstration we mark it but use a software bp internally.
+   230→        u8 saved = 0;
+   231→        if (!setSwBreakpoint(addr, &saved)) return -1;
+   232→        bp.original_byte = saved;
+   233→        bp.hw_slot = 0; // pretend slot 0
+   234→    }
+   235→    bps_[bp.id] = bp;
+   236→    return bp.id;
+   237→}
+   238→
+   239→bool DebuggerCore::removeBreakpoint(int id) {
+   240→    auto it = bps_.find(id);
+   241→    if (it == bps_.end()) return false;
+   242→    if (state_ == RunState::Stopped) {
+   243→        uninstallBp(it->second);
+   244→    }
+   245→    bps_.erase(it);
+   246→    return true;
+   247→}
+   248→
+   249→bool DebuggerCore::enableBreakpoint(int id) {
+   250→    auto it = bps_.find(id);
+   251→    if (it == bps_.end()) return false;
+   252→    it->second.enabled = true;
+   253→    if (state_ == RunState::Stopped) installBp(it->second);
+   254→    return true;
+   255→}
+   256→
+   257→bool DebuggerCore::disableBreakpoint(int id) {
+   258→    auto it = bps_.find(id);
+   259→    if (it == bps_.end()) return false;
+   260→    it->second.enabled = false;
+   261→    if (state_ == RunState::Stopped) uninstallBp(it->second);
+   262→    return true;
+   263→}
+   264→
+   265→std::vector<Breakpoint> DebuggerCore::breakpoints() const {
+   266→    std::vector<Breakpoint> v;
+   267→    v.reserve(bps_.size());
+   268→    for (auto& kv : bps_) v.push_back(kv.second);
+   269→    std::sort(v.begin(), v.end(), [](auto& a, auto& b){ return a.id < b.id; });
+   270→    return v;
+   271→}
+   272→
+   273→Breakpoint* DebuggerCore::findBreakpoint(addr_t addr) {
+   274→    for (auto& kv : bps_) {
+   275→        if (kv.second.address == addr && kv.second.enabled) return &kv.second;
+   276→    }
+   277→    return nullptr;
+   278→}
+   279→
+   280→int DebuggerCore::findBreakpointId(addr_t addr) {
+   281→    auto* bp = findBreakpoint(addr);
+   282→    return bp ? bp->id : -1;
+   283→}
+   284→
+   285→// --- Memory access ---
+   286→bool DebuggerCore::readMemory(addr_t addr, void* buf, size_t n) {
+   287→    // Try process_vm_readv first (stealth-friendly: doesn't generate ptrace events).
+   288→    iovec local  { buf, n };
+   289→    iovec remote { (void*)addr, n };
+   290→    ssize_t r = process_vm_readv(pid_, &local, 1, &remote, 1, 0);
+   291→    if (r == (ssize_t)n) return true;
+   292→
+   293→    // Fallback to PTRACE_PEEKDATA word-by-word
+   294→    size_t done = 0;
+   295→    while (done < n) {
+   296→        errno = 0;
+   297→        long word = ptrace(PTRACE_PEEKDATA, pid_, (void*)(addr + done), nullptr);
+   298→        if (errno != 0) {
+   299→            last_error_ = "readMemory peek failed at " + hex(addr + done);
+   300→            return false;
+   301→        }
+   302→        size_t chunk = std::min((size_t)sizeof(long), n - done);
+   303→        memcpy((u8*)buf + done, &word, chunk);
+   304→        done += chunk;
+   305→    }
+   306→    return true;
+   307→}
+   308→
+   309→bool DebuggerCore::writeMemory(addr_t addr, const void* buf, size_t n) {
+   310→    iovec local  { (void*)buf, n };
+   311→    iovec remote { (void*)addr, n };
+   312→    ssize_t r = process_vm_writev(pid_, &local, 1, &remote, 1, 0);
+   313→    if (r == (ssize_t)n) return true;
+   314→
+   315→    // Fallback to PTRACE_POKEDATA word-by-word.
+   316→    // IMPORTANT: POKEDATA writes a full 8-byte word. For partial writes
+   317→    // (when n is not a multiple of 8, or the last chunk is < 8 bytes),
+   318→    // we must PEEKDATA the existing word first and overlay only the
+   319→    // intended bytes — otherwise we zero-extend and corrupt adjacent
+   320→    // memory in the target.
+   321→    size_t done = 0;
+   322→    while (done < n) {
+   323→        size_t chunk = std::min((size_t)sizeof(long), n - done);
+   324→        errno = 0;
+   325→        long word = ptrace(PTRACE_PEEKDATA, pid_, (void*)(addr + done), nullptr);
+   326→        if (errno != 0) {
+   327→            last_error_ = "writeMemory peek failed at " + hex(addr + done);
+   328→            return false;
+   329→        }
+   330→        memcpy(&word, (const u8*)buf + done, chunk);  // overlay only chunk bytes
+   331→        if (ptrace(PTRACE_POKEDATA, pid_, (void*)(addr + done), (void*)word) == -1) {
+   332→            last_error_ = "writeMemory poke failed";
+   333→            return false;
+   334→        }
+   335→        done += chunk;
+   336→    }
+   337→    return true;
+   338→}
+   339→
+   340→std::vector<u8> DebuggerCore::readMemoryVec(addr_t addr, size_t n) {
+   341→    std::vector<u8> v(n);
+   342→    if (!readMemory(addr, v.data(), n)) v.clear();
+   343→    return v;
+   344→}
+   345→
+   346→// --- Registers ---
+   347→bool DebuggerCore::readRegisters(RegisterSet& out) {
+   348→    user_regs_struct r;
+   349→    if (ptrace(PTRACE_GETREGS, pid_, nullptr, &r) == -1) {
+   350→        last_error_ = "GETREGS failed";
+   351→        return false;
+   352→    }
+   353→    out.rax = r.rax;  out.rbx = r.rbx;  out.rcx = r.rcx;  out.rdx = r.rdx;
+   354→    out.rsi = r.rsi;  out.rdi = r.rdi;  out.rbp = r.rbp;  out.rsp = r.rsp;
+   355→    out.r8  = r.r8;   out.r9  = r.r9;   out.r10 = r.r10;  out.r11 = r.r11;
+   356→    out.r12 = r.r12;  out.r13 = r.r13;  out.r14 = r.r14;  out.r15 = r.r15;
+   357→    out.rip = r.rip;  out.rflags = r.eflags;
+   358→    out.cs = r.cs;    out.ss = r.ss;    out.ds = r.ds;    out.es = r.es;
+   359→    out.fs = r.fs;    out.gs = r.gs;    out.orig_rax = r.orig_rax;
+   360→    return true;
+   361→}
+   362→
+   363→bool DebuggerCore::writeRegisters(const RegisterSet& in) {
+   364→    user_regs_struct r;
+   365→    if (ptrace(PTRACE_GETREGS, pid_, nullptr, &r) == -1) return false;
+   366→    r.rax=in.rax; r.rbx=in.rbx; r.rcx=in.rcx; r.rdx=in.rdx;
+   367→    r.rsi=in.rsi; r.rdi=in.rdi; r.rbp=in.rbp; r.rsp=in.rsp;
+   368→    r.r8=in.r8; r.r9=in.r9; r.r10=in.r10; r.r11=in.r11;
+   369→    r.r12=in.r12; r.r13=in.r13; r.r14=in.r14; r.r15=in.r15;
+   370→    r.rip=in.rip; r.eflags=in.rflags;
+   371→    r.cs=in.cs; r.ss=in.ss; r.ds=in.ds; r.es=in.es;
+   372→    r.fs=in.fs; r.gs=in.gs; r.orig_rax=in.orig_rax;
+   373→    return ptrace(PTRACE_SETREGS, pid_, nullptr, &r) != -1;
+   374→}
+   375→
+   376→// --- Maps / threads ---
+   377→std::vector<MemoryRegion> DebuggerCore::readMaps() {
+   378→    std::vector<MemoryRegion> out;
+   379→    std::ifstream f("/proc/" + std::to_string(pid_) + "/maps");
+   380→    std::string line;
+   381→    while (std::getline(f, line)) {
+   382→        MemoryRegion r{};
+   383→        char perms[8] = {0};
+   384→        char path[512] = {0};
+   385→        unsigned long start, end, offset;
+   386→        int n = sscanf(line.c_str(), "%lx-%lx %7s %lx %*x:%*x %*d %511s",
+   387→                       &start, &end, perms, &offset, path);
+   388→        r.start = start; r.end = end; r.offset = offset;
+   389→        r.read  = strchr(perms, 'r') != nullptr;
+   390→        r.write = strchr(perms, 'w') != nullptr;
+   391→        r.exec  = strchr(perms, 'x') != nullptr;
+   392→        r.shared= strchr(perms, 's') != nullptr;
+   393→        if (n >= 5) r.path = path;
+   394→        out.push_back(r);
+   395→    }
+   396→    maps_cache_ = out;  // v1.1.1: cache for backtrace symbol resolution
+   397→    return out;
+   398→}
+   399→
+   400→std::vector<ThreadInfo> DebuggerCore::readThreads() {
+   401→    std::vector<ThreadInfo> out;
+   402→    DIR* d = opendir(("/proc/" + std::to_string(pid_) + "/task").c_str());
+   403→    if (!d) return out;
+   404→    struct dirent* de;
+   405→    while ((de = readdir(d))) {
+   406→        if (de->d_name[0] == '.') continue;
+   407→        ThreadInfo t{};
+   408→        t.tid = atoi(de->d_name);
+   409→        std::ifstream f("/proc/" + std::to_string(pid_) + "/task/" +
+   410→                        std::to_string(t.tid) + "/stat");
+   411→        std::string stat_line;
+   412→        std::getline(f, stat_line);
+   413→        // stat format: pid (comm) state ...
+   414→        size_t rp = stat_line.rfind(')');
+   415→        if (rp != std::string::npos && rp + 2 < stat_line.size()) {
+   416→            t.state = stat_line.substr(rp + 2, 1);
+   417→        }
+   418→        // Read comm
+   419→        std::ifstream cf("/proc/" + std::to_string(pid_) + "/task/" +
+   420→                         std::to_string(t.tid) + "/comm");
+   421→        std::getline(cf, t.name);
+   422→        out.push_back(t);
+   423→    }
+   424→    closedir(d);
+   425→    return out;
+   426→}
+   427→
+   428→addr_t DebuggerCore::findSymbol(const std::string& name) {
+   429→    // Try /proc/<pid>/maps + read ELF .symtab — minimal: just look for libc func
+   430→    auto maps = readMaps();
+   431→    for (auto& m : maps) {
+   432→        if (m.path.find("libc") != std::string::npos && m.exec) {
+   433→            // We'd need to parse the ELF; return the start of this region.
+   434→            return m.start;
+   435→        }
+   436→    }
+   437→    return 0;
+   438→}
+   439→
+   440→addr_t DebuggerCore::findFunctionStart(addr_t addr) {
+   441→    // Walk backwards looking for typical function prologue (push rbp / sub rsp etc.)
+   442→    // This is a heuristic. Scan up to 4KB back, but never underflow.
+   443→    addr_t limit = (addr >= 0x1000) ? (addr - 0x1000) : 0;
+   444→    for (addr_t a = addr; a > limit; a--) {
+   445→        u8 b = peekByte(a);
+   446→        // 0x55 = push rbp (very common prologue start)
+   447→        if (b == 0x55) {
+   448→            u8 next = peekByte(a + 1);
+   449→            if (next == 0x48) { // REX.W
+   450→                u8 next2 = peekByte(a + 2);
+   451→                if (next2 == 0x89 || next2 == 0x8B) return a;
+   452→            }
+   453→        }
+   454→    }
+   455→    return addr;
+   456→}
+   457→
+   458→// --- Static helpers ---
+   459→std::vector<ProcessInfo> DebuggerCore::listProcesses() {
+   460→    std::vector<ProcessInfo> out;
+   461→    DIR* d = opendir("/proc");
+   462→    if (!d) return out;
+   463→    struct dirent* de;
+   464→    while ((de = readdir(d))) {
+   465→        if (de->d_name[0] < '0' || de->d_name[0] > '9') continue;
+   466→        pid_t pid = atoi(de->d_name);
+   467→        ProcessInfo p{};
+   468→        p.pid = pid;
+   469→        std::ifstream cf(std::string("/proc/") + de->d_name + "/comm");
+   470→        std::getline(cf, p.name);
+   471→
+   472→        std::ifstream sf(std::string("/proc/") + de->d_name + "/stat");
+   473→        std::string stat_line;
+   474→        std::getline(sf, stat_line);
+   475→        size_t rp = stat_line.rfind(')');
+   476→        if (rp != std::string::npos && rp + 2 < stat_line.size()) {
+   477→            p.state = stat_line.substr(rp + 2, 1);
+   478→        }
+   479→
+   480→        // cmdline
+   481→        std::ifstream cl(std::string("/proc/") + de->d_name + "/cmdline");
+   482→        std::string s;
+   483→        std::getline(cl, s, '\0');
+   484→        p.cmdline = s;
+   485→
+   486→        // memory
+   487→        std::ifstream sm(std::string("/proc/") + de->d_name + "/statm");
+   488→        long rss_pages = 0;
+   489→        sm.ignore(100, ' ');
+   490→        sm >> rss_pages;
+   491→        p.memory_kb = rss_pages * 4;
+   492→
+   493→        out.push_back(p);
+   494→    }
+   495→    closedir(d);
+   496→    std::sort(out.begin(), out.end(), [](auto& a, auto& b){ return a.pid < b.pid; });
+   497→    return out;
+   498→}
+   499→
+   500→// --- Private ---
+   501→bool DebuggerCore::setSwBreakpoint(addr_t addr, u8* saved) {
+   502→    u8 orig = peekByte(addr);
+   503→    if (saved) *saved = orig;
+   504→    return pokeByte(addr, 0xCC);
+   505→}
+   506→
+   507→bool DebuggerCore::clearSwBreakpoint(addr_t addr, u8 saved) {
+   508→    return pokeByte(addr, saved);
+   509→}
+   510→
+   511→bool DebuggerCore::installAllBps() {
+   512→    for (auto& kv : bps_) {
+   513→        if (kv.second.enabled) installBp(kv.second);
+   514→    }
+   515→    return true;
+   516→}
+   517→
+   518→bool DebuggerCore::uninstallAllBps() {
+   519→    for (auto& kv : bps_) {
+   520→        if (kv.second.enabled) uninstallBp(kv.second);
+   521→    }
+   522→    return true;
+   523→}
+   524→
+   525→bool DebuggerCore::installBp(Breakpoint& bp) {
+   526→    if (!bp.enabled) return false;
+   527→    return pokeByte(bp.address, 0xCC);
+   528→}
+   529→
+   530→bool DebuggerCore::uninstallBp(Breakpoint& bp) {
+   531→    return pokeByte(bp.address, bp.original_byte);
+   532→}
+   533→
+   534→u8 DebuggerCore::peekByte(addr_t addr) {
+   535→    errno = 0;
+   536→    long word = ptrace(PTRACE_PEEKDATA, pid_, (void*)addr, nullptr);
+   537→    if (errno != 0) return 0;
+   538→    return (u8)(word & 0xFF);
+   539→}
+   540→
+   541→bool DebuggerCore::pokeByte(addr_t addr, u8 v) {
+   542→    // Read the aligned word, modify the lowest byte, write back
+   543→    errno = 0;
+   544→    long word = ptrace(PTRACE_PEEKDATA, pid_, (void*)addr, nullptr);
+   545→    if (errno != 0) return false;
+   546→    word = (word & ~0xFFL) | (long)v;
+   547→    return ptrace(PTRACE_POKEDATA, pid_, (void*)addr, (void*)word) != -1;
+   548→}
+   549→
+   550→// ===== v1.1.1 advanced features =====
+   551→
+   552→int DebuggerCore::addConditionalBreakpoint(addr_t addr, const std::string& condition,
+   553→                                            const std::string& label) {
+   554→    int id = addBreakpoint(addr, false, label);
+   555→    if (id < 0) return -1;
+   556→    auto it = bps_.find(id);
+   557→    if (it != bps_.end()) it->second.condition = condition;
+   558→    return id;
+   559→}
+   560→
+   561→bool DebuggerCore::setBreakpointCondition(int id, const std::string& condition) {
+   562→    auto it = bps_.find(id);
+   563→    if (it == bps_.end()) return false;
+   564→    it->second.condition = condition;
+   565→    return true;
+   566→}
+   567→
+   568→bool DebuggerCore::checkBreakpointCondition(int id) {
+   569→    auto it = bps_.find(id);
+   570→    if (it == bps_.end()) return true;
+   571→    if (it->second.condition.empty()) return true;
+   572→
+   573→    RegisterSet r;
+   574→    if (!readRegisters(r)) return true; // fire on error
+   575→
+   576→    // Very simple condition evaluator: <reg> <op> <value>
+   577→    // Supported regs: rax rbx rcx rdx rsi rdi rbp rsp rip
+   578→    //                 r8 r9 r10 r11 r12 r13 r14 r15
+   579→    // Supported ops: == != > < >= <=
+   580→    // Values: hex (0x...) or decimal
+   581→    std::istringstream ss(it->second.condition);
+   582→    std::string regname, op, valstr;
+   583→    ss >> regname >> op >> valstr;
+   584→    if (regname.empty() || op.empty() || valstr.empty()) return true;
+   585→
+   586→    auto lookup = [&](const std::string& n, u64& out) -> bool {
+   587→        if (n == "rax" || n == "RAX") { out = r.rax; return true; }
+   588→        if (n == "rbx" || n == "RBX") { out = r.rbx; return true; }
+   589→        if (n == "rcx" || n == "RCX") { out = r.rcx; return true; }
+   590→        if (n == "rdx" || n == "RDX") { out = r.rdx; return true; }
+   591→        if (n == "rsi" || n == "RSI") { out = r.rsi; return true; }
+   592→        if (n == "rdi" || n == "RDI") { out = r.rdi; return true; }
+   593→        if (n == "rbp" || n == "RBP") { out = r.rbp; return true; }
+   594→        if (n == "rsp" || n == "RSP") { out = r.rsp; return true; }
+   595→        if (n == "rip" || n == "RIP") { out = r.rip; return true; }
+   596→        if (n == "r8"  || n == "R8")  { out = r.r8;  return true; }
+   597→        if (n == "r9"  || n == "R9")  { out = r.r9;  return true; }
+   598→        if (n == "r10" || n == "R10") { out = r.r10; return true; }
+   599→        if (n == "r11" || n == "R11") { out = r.r11; return true; }
+   600→        if (n == "r12" || n == "R12") { out = r.r12; return true; }
+   601→        if (n == "r13" || n == "R13") { out = r.r13; return true; }
+   602→        if (n == "r14" || n == "R14") { out = r.r14; return true; }
+   603→        if (n == "r15" || n == "R15") { out = r.r15; return true; }
+   604→        return false;
+   605→    };
+   606→
+   607→    u64 regval;
+   608→    if (!lookup(regname, regval)) return true;
+   609→    u64 cmpval = strtoull(valstr.c_str(), nullptr, 0);
+   610→
+   611→    bool result = true;
+   612→    if (op == "==") result = (regval == cmpval);
+   613→    else if (op == "!=") result = (regval != cmpval);
+   614→    else if (op == ">")  result = (regval >  cmpval);
+   615→    else if (op == "<")  result = (regval <  cmpval);
+   616→    else if (op == ">=") result = (regval >= cmpval);
+   617→    else if (op == "<=") result = (regval <= cmpval);
+   618→    return result;
+   619→}
+   620→
+   621→int DebuggerCore::addTempBreakpoint(addr_t addr, const std::string& label) {
+   622→    int id = addBreakpoint(addr, false, label);
+   623→    if (id < 0) return -1;
+   624→    auto it = bps_.find(id);
+   625→    if (it != bps_.end()) it->second.temporary = true;
+   626→    return id;
+   627→}
+   628→
+   629→int DebuggerCore::addWatchpoint(addr_t addr, size_t len, WatchType type, const std::string& label) {
+   630→    // Hardware watchpoint via DR0-DR3 + DR7
+   631→    // For demo: we store the watchpoint in the bps_ map but mark it as a watchpoint.
+   632→    // Real DR programming requires PTRACE_POKEUSER to debug registers.
+   633→    Breakpoint bp;
+   634→    bp.id = next_bp_id_++;
+   635→    bp.address = addr;
+   636→    bp.label = label.empty() ? ("wp_" + std::to_string(bp.id)) : label;
+   637→    bp.is_watchpoint = true;
+   638→    bp.watch_len = (int)std::min((size_t)8, len);
+   639→    bp.watch_type = (type == WatchType::Write) ? 0 :
+   640→                    (type == WatchType::ReadWrite) ? 1 : 2;
+   641→    bp.enabled = true;
+   642→    // No INT3 patch — hardware watchpoints don't modify memory
+   643→    bps_[bp.id] = bp;
+   644→    return bp.id;
+   645→}
+   646→
+   647→bool DebuggerCore::removeWatchpoint(int id) {
+   648→    return removeBreakpoint(id);
+   649→}
+   650→
+   651→std::vector<Breakpoint> DebuggerCore::watchpoints() const {
+   652→    std::vector<Breakpoint> v;
+   653→    for (auto& kv : bps_) {
+   654→        if (kv.second.is_watchpoint) v.push_back(kv.second);
+   655→    }
+   656→    std::sort(v.begin(), v.end(), [](auto& a, auto& b){ return a.id < b.id; });
+   657→    return v;
+   658→}
+   659→
+   660→bool DebuggerCore::stepOut() {
+   661→    // Read return address from top of stack
+   662→    RegisterSet r;
+   663→    if (!readRegisters(r)) return false;
+   664→    u64 ret_addr = 0;
+   665→    if (!readMemory(r.rsp, &ret_addr, 8)) return false;
+   666→    int id = addTempBreakpoint(ret_addr, "_step_out_ret");
+   667→    if (id < 0) return false;
+   668→    bool ok = cont();
+   669→    int sig; bool ex; int code;
+   670→    if (waitForStop(sig, ex, code)) {
+   671→        removeBreakpoint(id);
+   672→    }
+   673→    return ok;
+   674→}
+   675→
+   676→bool DebuggerCore::stepOver() {
+   677→    RegisterSet r;
+   678→    if (!readRegisters(r)) return false;
+   679→    // Read instruction at RIP — if it's a CALL, set temp bp after it
+   680→    u8 buf[16];
+   681→    if (!readMemory(r.rip, buf, 16)) return step();
+   682→
+   683→    // Detect CALL rel32 (0xE8) or CALL r/m64 (0xFF /2)
+   684→    size_t call_len = 0;
+   685→    if (buf[0] == 0xE8) call_len = 5;
+   686→    else if (buf[0] == 0xFF && (buf[1] & 0x38) == 0x10) call_len = 2;
+   687→    else if (buf[0] == 0x48 && buf[1] == 0xFF && (buf[2] & 0x38) == 0x10) call_len = 3;
+   688→
+   689→    if (call_len == 0) {
+   690→        // Not a CALL — just single-step
+   691→        return step();
+   692→    }
+   693→    int id = addTempBreakpoint(r.rip + call_len, "_step_over");
+   694→    if (id < 0) return step();
+   695→    bool ok = cont();
+   696→    int sig; bool ex; int code;
+   697→    if (waitForStop(sig, ex, code)) {
+   698→        removeBreakpoint(id);
+   699→    }
+   700→    return ok;
+   701→}
+   702→
+   703→bool DebuggerCore::stepToSyscall(int& syscall_nr, bool& is_entry) {
+   704→    if (pid_ == 0) return false;
+   705→    if (ptrace(PTRACE_SYSCALL, pid_, nullptr, nullptr) == -1) return false;
+   706→    int status;
+   707→    if (waitpid(pid_, &status, 0) == -1) return false;
+   708→    if (WIFSTOPPED(status)) {
+   709→        RegisterSet r;
+   710→        if (readRegisters(r)) {
+   711→            // orig_rax holds syscall number; rax holds return value on exit
+   712→            syscall_nr = (int)r.orig_rax;
+   713→            // If rax == -ENOSYS, we're at entry; otherwise at exit
+   714→            is_entry = ((long)r.rax == -38);  // -ENOSYS
+   715→        }
+   716→        state_ = RunState::Stopped;
+   717→        return true;
+   718→    }
+   719→    return false;
+   720→}
+   721→
+   722→std::vector<DebuggerCore::Frame> DebuggerCore::backtrace(size_t max_frames) {
+   723→    std::vector<Frame> frames;
+   724→    if (pid_ == 0) return frames;
+   725→    RegisterSet r;
+   726→    if (!readRegisters(r)) return frames;
+   727→
+   728→    Frame current;
+   729→    current.rip = r.rip;
+   730→    current.rbp = r.rbp;
+   731→    current.rsp = r.rsp;
+   732→    // Resolve symbol from maps
+   733→    for (auto& m : maps_cache_) {
+   734→        if (current.rip >= m.start && current.rip < m.end) {
+   735→            size_t slash = m.path.rfind('/');
+   736→            std::string bn = (slash != std::string::npos) ? m.path.substr(slash + 1) : m.path;
+   737→            current.symbol = bn + "+0x" + hex2(current.rip - m.start, 0);
+   738→            break;
+   739→        }
+   740→    }
+   741→    frames.push_back(current);
+   742→
+   743→    // Walk the RBP chain
+   744→    addr_t rbp = r.rbp;
+   745→    for (size_t i = 1; i < max_frames; i++) {
+   746→        if (rbp == 0) break;
+   747→        u64 next_rbp = 0, ret_addr = 0;
+   748→        if (!readMemory(rbp, &next_rbp, 8)) break;
+   749→        if (!readMemory(rbp + 8, &ret_addr, 8)) break;
+   750→        if (next_rbp <= rbp) break; // sanity
+   751→        Frame f;
+   752→        f.rip = ret_addr;
+   753→        f.rbp = next_rbp;
+   754→        f.rsp = rbp + 16;
+   755→        for (auto& m : maps_cache_) {
+   756→            if (f.rip >= m.start && f.rip < m.end) {
+   757→                size_t slash = m.path.rfind('/');
+   758→                std::string bn = (slash != std::string::npos) ? m.path.substr(slash + 1) : m.path;
+   759→                f.symbol = bn + "+0x" + hex2(f.rip - m.start, 0);
+   760→                break;
+   761→            }
+   762→        }
+   763→        frames.push_back(f);
+   764→        rbp = next_rbp;
+   765→    }
+   766→    return frames;
+   767→}
+   768→
+   769→long DebuggerCore::currentSyscall() const {
+   770→    // We can't read registers from a const method, but we can return the cached value
+   771→    // from the last stop. For simplicity, return 0 if not in a syscall stop.
+   772→    return 0;
+   773→}
+   774→
+   775→} // namespace ndbg
+   776→

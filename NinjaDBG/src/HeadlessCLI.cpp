@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.1 - HeadlessCLI implementation
+// NinjaDBG v1.1.2 - HeadlessCLI implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "HeadlessCLI.h"
 #include "WelcomeScreen.h"
@@ -8,6 +8,7 @@
 #include <sstream>
 #include <cstring>
 #include <cstdlib>
+#include <cerrno>
 #include <unistd.h>
 #include <termios.h>
 
@@ -35,9 +36,9 @@ void HeadlessCLI::printBanner() {
         " | |\\  | | |_| | | | (_| | | | |_| |\\___ \\ \n"
         " |_| \\_|_|\\__|_| |_|\\__,_|_|  \\___/|____) |\n"
         "\n"
-        "  v1.1.1 — Stealth Debugger  (Open Source (Apache-2.0) - by Chapzoo)\n"
+        "  v1.1.2 — Stealth Debugger  (Open Source (Apache-2.0) - by Chapzoo)\n"
         "  Headless CLI mode. Type 'help' for command list, 'quit' to exit.\n"
-        "  New in v1.1.1: decomp (native C decompilation via RetDec/angr)\n"
+        "  New in v1.1.2: decomp (native C decompilation via RetDec/angr)\n"
         "\n";
 }
 
@@ -76,8 +77,11 @@ void HeadlessCLI::addHistory(const std::string& line) {
 }
 
 addr_t HeadlessCLI::parseAddr(const std::string& s, bool* ok) {
-    if (ok) *ok = true;
-    return (addr_t)strtoull(s.c_str(), nullptr, 0);
+    errno = 0;
+    char* end = nullptr;
+    unsigned long long v = strtoull(s.c_str(), &end, 0);
+    if (ok) *ok = (errno == 0 && end != s.c_str() && *end == '\0');
+    return (addr_t)v;
 }
 
 std::vector<u8> HeadlessCLI::parseBytes(const std::vector<std::string>& tokens) {
@@ -794,8 +798,197 @@ void HeadlessCLI::cmdTarget(const std::vector<std::string>& args) {
     } else err("load failed: " + patcher_.lastError());
 }
 
-void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
-    out("NinjaDBG v1.1.1 CLI commands:\n"
+void HeadlessCLI::cmdHelp(const std::vector<std::string>& args) {
+    // If a specific command is requested, show detailed help for it
+    if (!args.empty()) {
+        const std::string& cmd = args[0];
+        if (cmd == "attach") {
+            out("attach <pid>\n\n"
+                "Attach to a running process by PID.\n\n"
+                "The target process will be stopped (SIGSTOP) and placed under\n"
+                "ptrace control. All existing threads are discovered automatically.\n\n"
+                "Example:\n"
+                "  (ninjadb) attach 12345\n"
+                "  Attached to pid 12345");
+            return;
+        }
+        if (cmd == "launch") {
+            out("launch <binary> [args...]\n\n"
+                "Launch a new process under the debugger. The binary is exec'd\n"
+                "with PTRACE_TRACEME enabled, so the child is traced from birth.\n\n"
+                "Example:\n"
+                "  (ninjadb) launch ./my_program --flag value");
+            return;
+        }
+        if (cmd == "break" || cmd == "b") {
+            out("break <addr> [condition]\n"
+                "b <addr> [condition]\n\n"
+                "Set a software breakpoint (INT3) at the given address.\n\n"
+                "Optional condition syntax: <register> <op> <value>\n"
+                "  Registers: rax rbx rcx rdx rsi rdi rbp rsp r8-r15 rip\n"
+                "  Operators: == != > < >= <=\n"
+                "  Values: hex (0x...) or decimal\n\n"
+                "Examples:\n"
+                "  (ninjadb) break 0x401000\n"
+                "  (ninjadb) break 0x401000 rax == 0x10\n"
+                "  (ninjadb) break 0x401000 rip > 0x400000");
+            return;
+        }
+        if (cmd == "tbreak" || cmd == "tb") {
+            out("tbreak <addr>\n"
+                "tb <addr>\n\n"
+                "Set a temporary breakpoint. It is automatically removed after\n"
+                "the first time it is hit. Useful for step-over, step-out, and\n"
+                "one-shot continue-until scenarios.");
+            return;
+        }
+        if (cmd == "watch") {
+            out("watch <addr> [len] [w|rw|x]\n\n"
+                "Set a hardware watchpoint at the given address.\n\n"
+                "  len: 1, 2, 4, or 8 bytes (default: 8)\n"
+                "  w:   write only (default)\n"
+                "  rw:  read or write\n"
+                "  x:   execute\n\n"
+                "Uses debug registers DR0-DR3 (max 4 concurrent watchpoints).");
+            return;
+        }
+        if (cmd == "disas" || cmd == "dis") {
+            out("disas [addr] [count]\n"
+                "dis [addr] [count]\n\n"
+                "Disassemble instructions starting at addr (default: current RIP).\n"
+                "Count defaults to 20 instructions.\n\n"
+                "The current RIP is highlighted with '>>'. Branch targets are\n"
+                "annotated with their resolved symbol (e.g. <libc.so.6+0x1234>).");
+            return;
+        }
+        if (cmd == "decomp" || cmd == "dec") {
+            out("decomp [addr] [max_bytes]\n"
+                "decomp file <binary> [addr]\n"
+                "decomp list\n"
+                "decomp api\n"
+                "decomp set <backend>\n\n"
+                "Decompile native code to C source using RetDec or angr.\n\n"
+                "Backends:\n"
+                "  retdec-native      In-process via dlopen (fastest)\n"
+                "  retdec-subprocess  Shell to retdec-decompiler binary\n"
+                "  angr               Python subprocess (slowest, best for stripped)\n\n"
+                "Without arguments, decompiles the function at the current RIP.\n"
+                "Use 'decomp file <binary>' for whole-file decompilation.\n"
+                "Use 'decomp set <backend>' to force a specific backend.");
+            return;
+        }
+        if (cmd == "pretty" || cmd == "pp") {
+            out("pretty set <lang>\n"
+                "pretty cstring <addr>\n"
+                "pretty cpp_string <addr>\n"
+                "pretty rust_string <addr>\n"
+                "pretty go_string <addr>\n"
+                "pretty py_string <addr>\n"
+                "pretty struct <addr> <descriptor>\n"
+                "pretty auto <addr>\n"
+                "pretty list\n"
+                "pretty api\n\n"
+                "Language-aware pretty printing of in-memory values.\n\n"
+                "Languages: c, cpp, rust, go, python, none\n\n"
+                "Struct descriptor types:\n"
+                "  i8 i16 i32 i64  - signed integers\n"
+                "  u8 u16 u32 u64  - unsigned integers\n"
+                "  f32 f64         - floats\n"
+                "  ptr             - pointer (hex)\n"
+                "  str             - pointer to C-string (dereferenced)\n"
+                "  hex<N>          - N raw bytes as hex");
+            return;
+        }
+        if (cmd == "edit") {
+            out("edit [addr]\n\n"
+                "Launch the interactive TUI memory editor at the given address\n"
+                "(default: current RIP).\n\n"
+                "Keys:\n"
+                "  arrows     Move cursor\n"
+                "  PageUp/Dn  Scroll one page\n"
+                "  e          Edit byte (type 2 hex digits, Enter)\n"
+                "  s          Seek to new address\n"
+                "  /          Search for byte pattern\n"
+                "  n / N      Next / previous search hit\n"
+                "  f          Follow pointer at cursor\n"
+                "  m          Toggle Hex / Disassembly mode\n"
+                "  w          Cycle row size (8/16/32)\n"
+                "  q          Quit editor");
+            return;
+        }
+        if (cmd == "x") {
+            out("x /Nxb <addr>   Examine N bytes in hex\n"
+                "x /Nxw <addr>   Examine N words (4 bytes each)\n"
+                "x /Nxg <addr>   Examine N qwords (8 bytes each)\n"
+                "x /Nxh <addr>   Examine N halfwords (2 bytes each)\n\n"
+                "Reads memory from the attached process and displays it in hex.\n"
+                "The format string is /<count>x<size> where size is b/w/g/h.");
+            return;
+        }
+        if (cmd == "patch") {
+            out("patch list\n"
+                "patch nop <offset> <length>\n"
+                "patch apply <offset> <kind> [bytes...]\n"
+                "patch save <outfile>\n"
+                "patch undo [id]\n"
+                "patch info\n\n"
+                "Static binary patching. Load a binary with 'target <file>' first.\n\n"
+                "Patch kinds:\n"
+                "  nop       Fill with 0x90\n"
+                "  jmp       Convert Jcc to JMP (always take)\n"
+                "  nojmp     Convert Jcc to NOPs (never take)\n"
+                "  callnop   Convert CALL to 5x NOP\n"
+                "  rettrue   Force function to return 1\n"
+                "  ascii     Replace ASCII string\n"
+                "  custom    User-supplied bytes\n\n"
+                "IDs are 0-indexed. 'patch undo' with no arg undoes the last patch.");
+            return;
+        }
+        if (cmd == "script") {
+            out("script list\n"
+                "script api\n"
+                "script run lua <file|code>\n"
+                "script run python <file|code>\n\n"
+                "Run Lua or Python scripts that control the debugger via the\n"
+                "ndbg module. The module is auto-injected; both 'import ndbg'\n"
+                "and bare 'ndbg.xxx()' work.\n\n"
+                "If the payload names an existing file, it is loaded; otherwise\n"
+                "it is treated as inline code.");
+            return;
+        }
+        if (cmd == "stealth") {
+            out("stealth list\n"
+                "stealth on <name>\n"
+                "stealth off <name>\n\n"
+                "Manage userland anti-detect techniques.\n\n"
+                "Names (substring match):\n"
+                "  Hardware Breakpoints\n"
+                "  process_vm_readv/writev\n"
+                "  Mask /proc/self/status\n"
+                "  Hide NinjaDBG mmaps\n"
+                "  Timing normalization\n"
+                "  Parent name masquerade\n"
+                "  Hide from ps\n"
+                "  INT3 scan bypass");
+            return;
+        }
+        if (cmd == "kernel") {
+            out("kernel status\n"
+                "kernel load\n"
+                "kernel unload\n\n"
+                "Manage the optional kernel-level stealth module (ninja_stealth.ko).\n\n"
+                "kernel load   Builds the LKM from source and loads it via insmod.\n"
+                "              Requires root and kernel headers installed.\n"
+                "kernel unload Unloads the module via rmmod.\n\n"
+                "The LKM hooks procfs reads to mask NinjaDBG's presence at the\n"
+                "kernel level, defeating checks that userland hooks cannot bypass.");
+            return;
+        }
+        err("No help available for: " + cmd + " (type 'help' for the command list)");
+        return;
+    }
+
+    out("NinjaDBG v1.1.2 CLI commands:\n"
         "  attach <pid>                  Attach to a running process\n"
         "  launch <bin> [args...]        Launch a new process under the debugger\n"
         "  detach                        Detach from the target\n"
@@ -817,14 +1010,14 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
         "  decomp [addr] [max_bytes]     Native C decompilation via RetDec/angr\n"
         "  decomp file <bin> [addr]      Decompile whole file or one function\n"
         "  decomp <list|api|set>         Decompiler backend management\n"
-        "  pretty set <lang>             [v1.1.1] Set pretty printer language (c|cpp|rust|go|python)\n"
-        "  pretty cstring <addr>         [v1.1.1] Print C string at addr\n"
-        "  pretty cpp_string <addr>      [v1.1.1] Print std::string at addr\n"
-        "  pretty rust_string <addr>     [v1.1.1] Print Rust String at addr\n"
-        "  pretty go_string <addr>       [v1.1.1] Print Go string at addr\n"
-        "  pretty py_string <addr>       [v1.1.1] Print CPython str at addr\n"
-        "  pretty struct <addr> <desc>   [v1.1.1] Parse struct (e.g. i32,str,ptr)\n"
-        "  pretty <list|api>             [v1.1.1] Show printers / API docs\n"
+        "  pretty set <lang>             [v1.1.2] Set pretty printer language (c|cpp|rust|go|python)\n"
+        "  pretty cstring <addr>         [v1.1.2] Print C string at addr\n"
+        "  pretty cpp_string <addr>      [v1.1.2] Print std::string at addr\n"
+        "  pretty rust_string <addr>     [v1.1.2] Print Rust String at addr\n"
+        "  pretty go_string <addr>       [v1.1.2] Print Go string at addr\n"
+        "  pretty py_string <addr>       [v1.1.2] Print CPython str at addr\n"
+        "  pretty struct <addr> <desc>   [v1.1.2] Parse struct (e.g. i32,str,ptr)\n"
+        "  pretty <list|api>             [v1.1.2] Show printers / API docs\n"
         "  bt | backtrace                Show call stack\n"
         "  target <binary>               Load a binary for static patching\n"
         "  patch list                    List applied patches\n"

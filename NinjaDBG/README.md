@@ -7,7 +7,11 @@
 [![Platform](https://img.shields.io/badge/Platform-Linux%20x86--64-252a40)](https://github.com/ChapzoMods/NinjaDBG)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-00599c)](https://isocpp.org/)
 
-**Version 1.1.1** | Open Source (Apache-2.0) | Created by **Chapzoo**
+**Version 1.1.2** | Open Source (Apache-2.0) | Created by **Chapzoo**
+
+**Status: Release Candidate (not production-ready).** NinjaDBG is under
+constant active development. It is maintained by a single person. Community
+contributions are greatly appreciated -- see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 [Live Demo & Docs](https://chapzomods.github.io/NinjaDBG/) | [Download](https://github.com/ChapzoMods/NinjaDBG/releases/latest) | [Star](https://github.com/ChapzoMods/NinjaDBG/stargazers)
 
@@ -24,7 +28,7 @@ debuggers leave obvious traces (INT3 bytes in `.text`, `TracerPid` set in
 `/proc/self/status`, parent process names like `gdb`), NinjaDBG masks, redirects,
 or eliminates each signal so the target process believes it is running alone.
 
-### What changed in v1.1.1 (hotfix)
+### What changed in v1.1.2 (hotfix)
 
 - **GUI removed.** NinjaDBG is now CLI-only. The headless CLI exposes the full
   feature set. This eliminates the Cairo/Pango/X11 build dependencies and
@@ -59,13 +63,13 @@ or eliminates each signal so the target process believes it is running alone.
 | Continue / pause | Yes | `PTRACE_CONT`, `SIGSTOP` |
 | Software breakpoints (INT3) | Yes | 0xCC patching, original byte preserved |
 | Hardware breakpoints (DR0-DR3) | Yes | No `0xCC` in target `.text` |
-| Conditional breakpoints | Yes (fixed in v1.1.1) | `"rax == 0x10"` syntax; condition now actually checked |
-| Temporary breakpoints | Yes (fixed in v1.1.1) | Auto-removed after first hit |
+| Conditional breakpoints | Yes (fixed in v1.1.2) | `"rax == 0x10"` syntax; condition now actually checked |
+| Temporary breakpoints | Yes (fixed in v1.1.2) | Auto-removed after first hit |
 | Watchpoints (memory access) | Yes | DR0-DR3 with W / RW / X |
 | Read/write registers + memory | Yes | `process_vm_readv`/`writev` (stealth) |
 | Backtrace (RBP chain walk) | Yes | Symbol resolution from `/proc/<pid>/maps` |
 | Syscall stepping | Yes | `PTRACE_SYSCALL`, entry vs exit detection |
-| Full x86-64 disassembler | Yes | Standalone module; ALU size/direction fixed in v1.1.1 |
+| Full x86-64 disassembler | Yes | Standalone module; ALU size/direction fixed in v1.1.2 |
 | Interactive TUI memory editor | Yes | VT100 raw-mode; hex+ASCII, seek, search, follow-ptr |
 | Lua + Python scripting | Yes | JSON-RPC subprocess bridge; `ndbg` module properly registered |
 | Pretty printers (C/C++/Rust/Go/Python) | Yes | Language-aware string and struct printing |
@@ -80,7 +84,7 @@ or eliminates each signal so the target process believes it is running alone.
 | Userland (8 techniques) | HW breakpoints, `process_vm_readv`, mask `/proc/self/status`, hide mmaps, timing normalization, parent name masquerade, hide from ps, INT3 scan bypass | Always available; `libninjastealth.so` auto-compiled on first run |
 | Kernel (8 techniques) | Hide PID from `/proc`, mask wchan, mask syscall, mask comm, suppress SIGCHLD, force dumpable, intercept TRACEME, hide mmaps | Optional LKM (`ninja_stealth.ko`); requires root |
 
-### libninjastealth.so hooks (rewritten in v1.1.1)
+### libninjastealth.so hooks (rewritten in v1.1.2)
 
 | Hook | What it does |
 |---|---|
@@ -97,7 +101,7 @@ All buffer rewriting uses `memmem`/`memchr` (bounded by read count) instead of
 
 ## Headless CLI
 
-The headless CLI is the only interface (GUI was removed in v1.1.1).
+The headless CLI is the only interface (GUI was removed in v1.1.2).
 
 ### Launching
 
@@ -197,7 +201,7 @@ pip3 install angr
 sudo apt-get install retdec-dev
 ```
 
-No more Cairo/Pango/X11 dependencies (GUI was removed in v1.1.1).
+No more Cairo/Pango/X11 dependencies (GUI was removed in v1.1.2).
 
 ### Compile
 
@@ -224,7 +228,7 @@ This produces `build/ninjadb` (the CLI binary) and `build/target_test` (demo tar
 
 ## Changelog
 
-### v1.1.1 (this release)
+### v1.1.2 (this release)
 
 **GUI removed:**
 - Deleted `MainWindow.cpp`, `MainWindowPanels.cpp`, `MainWindow.h`, `UITheme.h`
@@ -315,7 +319,7 @@ NinjaDBG/
 │   └── WelcomeScreen.cpp
 └── scripts/
     ├── target_test.cpp         Demo target
-    ├── ninjastealth.c          Preload payload (rewritten in v1.1.1)
+    ├── ninjastealth.c          Preload payload (rewritten in v1.1.2)
     └── ninja_stealth_kmod.c    Generated kernel module source
 ```
 
@@ -342,7 +346,7 @@ Request. Report bugs via GitHub Issues.
 
 <div align="center">
 
-NinjaDBG v1.1.1 | Apache-2.0 | by Chapzoo
+NinjaDBG v1.1.2 | Apache-2.0 | by Chapzoo
 
 Stay stealthy.
 

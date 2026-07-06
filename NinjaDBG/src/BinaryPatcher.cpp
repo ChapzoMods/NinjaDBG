@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.1 - BinaryPatcher implementation
+// NinjaDBG v1.1.2 - BinaryPatcher implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "BinaryPatcher.h"
 #include <fstream>
