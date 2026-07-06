@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.1 - Debugger Core (ptrace-based)
+// NinjaDBG v1.0.2 - Debugger Core (ptrace-based)
 // Closed Source - Free - by Chapzoo
 #pragma once
 

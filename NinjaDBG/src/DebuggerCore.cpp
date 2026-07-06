@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.1 - DebuggerCore implementation
+// NinjaDBG v1.0.2 - DebuggerCore implementation
 // Closed Source - Free - by Chapzoo
 #include "DebuggerCore.h"
 #include "AntiDetect.h"

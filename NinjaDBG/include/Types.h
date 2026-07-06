@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.1 - Common Types & Constants
+// NinjaDBG v1.0.2 - Common Types & Constants
 // Closed Source - Free - by Chapzoo
 #pragma once
 

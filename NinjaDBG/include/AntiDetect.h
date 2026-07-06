@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.1 - Anti-Detect Module (Stealth)
+// NinjaDBG v1.0.2 - Anti-Detect Module (Stealth)
 // Closed Source - Free - by Chapzoo
 //
 // Implements techniques to hide NinjaDBG from processes that try to detect

@@ -1,6 +1,5 @@
-// NinjaDBG v1.0.1 - Screenshot orchestrator
-// Launches the app, takes a screenshot of the main window,
-// then re-launches it with the About modal open for a second screenshot.
+// NinjaDBG v1.0.2 - Entry point
+// Closed Source - Free - by Chapzoo
 #include "MainWindow.h"
 #include "UITheme.h"
 #include <iostream>
@@ -18,7 +17,7 @@ int main(int argc, char** argv) {
     bool show_about = (getenv("NINJADBG_SHOW_ABOUT") != nullptr);
     bool attach_demo = (getenv("NINJADBG_DEMO_ATTACH") != nullptr);
 
-    std::cout << "NinjaDBG v1.0.1 - Stealth Debugger" << std::endl;
+    std::cout << "NinjaDBG v1.0.2 - Stealth Debugger" << std::endl;
     std::cout << "Closed Source - Free - Created by Chapzoo" << std::endl;
     std::cout << std::endl;
 

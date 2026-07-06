@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.1 - UI Theme & Layout Constants
+// NinjaDBG v1.0.2 - UI Theme & Layout Constants
 // Closed Source - Free - by Chapzoo
 #pragma once
 
@@ -38,19 +38,28 @@ namespace col {
 
 // Layout
 namespace lay {
-    constexpr int WIN_W = 1600;
-    constexpr int WIN_H = 1000;
-    constexpr int TOOLBAR_H = 56;
-    constexpr int STATUSBAR_H = 28;
-    constexpr int LEFT_W = 280;
-    constexpr int RIGHT_W = 360;
-    constexpr int BOTTOM_H = 180;
+    constexpr int WIN_W = 1680;
+    constexpr int WIN_H = 1050;
+    constexpr int TOOLBAR_H = 64;       // taller for icon+label buttons
+    constexpr int STATUSBAR_H = 30;
+    constexpr int LEFT_W = 290;
+    constexpr int RIGHT_W = 370;
+    constexpr int BOTTOM_H = 190;
     constexpr int PAD = 8;
+
+    // Button geometry
+    constexpr int BTN_H = 40;
+    constexpr int BTN_ICON_SZ = 20;
+    constexpr int BTN_GAP = 6;
+    constexpr int BTN_PAD_X = 12;
+    constexpr int SEPARATOR_W = 12;
+
     constexpr int FONT_TITLE = 16;
     constexpr int FONT_BODY  = 13;
     constexpr int FONT_MONO  = 12;
     constexpr int FONT_SMALL = 11;
     constexpr int FONT_BIG   = 22;
+    constexpr int FONT_HUGE  = 32;
 }
 
 namespace font {

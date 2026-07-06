@@ -1,149 +1,142 @@
+<div align="center">
+
 # 🥷 NinjaDBG
 
-<p align="center">
-  <img src="resources/ninja_logo.svg" alt="NinjaDBG Logo" width="180" height="180" />
-</p>
+<img src="resources/ninja_logo.svg" alt="NinjaDBG" width="220" height="220" />
 
-<p align="center">
-  <strong>NinjaDBG v1.0.1</strong><br/>
-  A stealth-aware C++17 debugger for Linux x86-64.<br/>
-  Designed to evade common anti-debugging techniques used by packed binaries, malware, and license-protected software.
-</p>
+### Stealth-Aware Native Debugger for Linux x86-64
 
-<p align="center">
-  <em>Closed Source — Free for all uses — Created by <strong>Chapzoo</strong> (one person)</em>
-</p>
+**Version 1.0.2** · Closed Source · Free · Created by **Chapzoo**
+
+[Features](#-features) · [Anti-Detect](#-anti-detect-techniques) · [Build](#-build) · [Screenshots](#-screenshots) · [License](#-license)
+
+</div>
 
 ---
 
-## ⚖️ License
+## 📖 Overview
 
-**NinjaDBG is Closed Source but 100% Free.**
+**NinjaDBG** is a native C++17 debugger for Linux/x86-64 engineered around one
+principle: **silence**. Where conventional debuggers leave obvious traces —
+INT3 bytes in `.text`, `TracerPid` set in `/proc/self/status`, parent process
+names like `gdb` or `lldb` — NinjaDBG masks, redirects, or eliminates each
+signal so that the target process believes it is running alone.
 
-| Right            | Status |
-|------------------|--------|
-| Use              | ✅ Allowed — personal, academic, commercial |
-| Redistribute     | ✅ Allowed — verbatim binaries only |
-| Modify           | ❌ Not allowed — source is not distributed |
-| Sublicense       | ❌ Not allowed |
-| Hold liable      | ❌ No warranty, use at your own risk |
+It is purpose-built for analysts working against:
 
-You may use the compiled binaries freely. You may **not** redistribute modified
-versions, reverse-engineer the binaries, or represent the work as your own.
+- **Packed binaries** (UPX, Themida, VMProtect) that abort when traced
+- **Malware loaders** that scan their own `.text` for `0xCC` software breakpoints
+- **DRM / license-check routines** that probe `ptrace` state
+- **Anti-cheat agents** that enumerate `/proc/<pid>/maps` looking for injected
+  preload libraries
 
-The source code is private and is **not** published. This README, the SVG logo,
-the public API surface, and the compiled artifacts are the only distributed
-materials.
-
-By downloading or running NinjaDBG you accept full responsibility for any
-damage caused to your system or data. The author provides **no warranty**,
-express or implied.
-
----
-
-## 👤 Author
-
-**Chapzoo** — solo developer.
-
-NinjaDBG is the work of a single person. All design, implementation, testing,
-and distribution is done by Chapzoo. There is no team, no company, and no
-external contributor agreement. Bug reports and feature requests are welcome;
-pull requests are not, since the source is closed.
+NinjaDBG exposes eight toggleable stealth techniques, a full multi-panel
+graphical interface rendered directly on Xlib+Cairo (no Qt, no GTK, no
+Electron), a built-in software x86-64 disassembler, and an `LD_PRELOAD`
+payload generator that rewrites the `TracerPid:` field in the target's
+`/proc/self/status` reads — defeating the most common Linux anti-debug check.
 
 ---
 
-## ✨ What is NinjaDBG?
+## ✨ Features
 
-NinjaDBG is a native C++17 debugger for Linux/x86-64 with a strong focus on
-**stealth**: it is designed to attach to targets that actively try to detect
-debugger presence and bail out, crash, or behave differently when traced.
+### Core debugging engine
 
-Most modern packers, malware loaders, DRM wrappers, and anti-cheat agents
-check for the presence of a debugger using one or more of these techniques:
-
-1. **`ptrace(PTRACE_TRACEME)` self-check** — fails if the process is already traced.
-2. **`/proc/self/status` → `TracerPid:` field** — non-zero indicates a tracer.
-3. **`/proc/self/stat` wchan / signal inspection**.
-4. **`INT3` (0xCC) byte scanning** — software breakpoints modify the .text section.
-5. **`RDTSC` / `clock_gettime` timing checks** — single-stepping introduces measurable delay.
-6. **Parent process name inspection** — `/proc/ppid/comm` reveals the debugger name.
-7. **Self-mmap enumeration** — `/proc/self/maps` exposes injected libraries.
-
-NinjaDBG counters each of these with a dedicated counter-technique (see
-[§ Anti-Detect Techniques](#-anti-detect-techniques) below).
-
----
-
-## 🧩 Features
-
-### Core debugging
-- ✅ Attach to running process by PID, or launch+trace a new process
-- ✅ Software (`INT3`) and hardware (DR0-DR3) breakpoints
-- ✅ Single-step, continue, step-into, step-out, pause, restart, kill
-- ✅ Read/write target memory
-- ✅ Read/write CPU registers (all 16 GPRs + RIP + RFLAGS + segment regs)
-- ✅ Enumerate threads (`/proc/<pid>/task`)
-- ✅ Parse `/proc/<pid>/maps` to display memory regions
-- ✅ Built-in software x86-64 disassembler (covers common opcodes)
+| Capability | Status | Notes |
+|---|---|---|
+| Attach to running process by PID | ✅ | `ptrace(PTRACE_ATTACH)` |
+| Launch + trace new process | ✅ | `PTRACE_TRACEME` + `execv` |
+| Detach (resume normal execution) | ✅ | `PTRACE_DETACH` |
+| Force-kill target | ✅ | `PTRACE_KILL` |
+| Single-step | ✅ | `PTRACE_SINGLESTEP` |
+| Continue / pause | ✅ | `PTRACE_CONT`, `SIGSTOP` |
+| Software breakpoints (INT3) | ✅ | 0xCC patching, original byte preserved |
+| Hardware breakpoints (DR0-DR3) | ✅ | API surface; INT3 fallback in 1.0.2 |
+| Read/write GPRs + RIP + RFLAGS | ✅ | All 16 GPRs + segment regs |
+| Read/write target memory | ✅ | `process_vm_readv` / `process_vm_writev` (stealth) |
+| Enumerate threads | ✅ | Walks `/proc/<pid>/task` |
+| Parse `/proc/<pid>/maps` | ✅ | Region permissions, offsets, paths |
+| Follow child processes | ✅ | `PTRACE_O_TRACECLONE / TRACEFORK / TRACEEXEC` |
+| Auto-detach on parent exit | ✅ | `PTRACE_O_EXITKILL` |
 
 ### Stealth subsystem
-- ✅ `process_vm_readv` / `process_vm_writev` for memory access (no ptrace events)
-- ✅ Hardware breakpoint support (DR0-DR3) — no `0xCC` left in target .text
-- ✅ `LD_PRELOAD` injection payload that masks `TracerPid:` in `/proc/self/status`
-- ✅ Parent process name masquerade (`argv[0] = "[kworker/u:1]"`)
-- ✅ Timing normalization hook (RDTSC / clock_gettime)
-- ✅ Per-technique enable/disable toggles in the UI
+
+See [§ Anti-Detect Techniques](#-anti-detect-techniques) for the full table.
+
+- Eight toggleable techniques exposed in the UI as live switches
+- `libninjastealth.so` preload payload auto-generated at first run
+- Per-technique human-readable name + description in the About dialog
 
 ### User interface
-- ✅ Professional dark "ninja" theme (charcoal + neon cyan)
-- ✅ Multi-panel layout:
-  - Process list (left)
-  - Disassembly (center top)
-  - Memory hex dump (center middle)
-  - Stack view (center bottom)
-  - Registers (right top)
-  - Anti-Detect toggles (right middle)
+
+- **Native Xlib + Cairo + Pango** — no Qt, no GTK, no Electron
+- Dark "ninja" theme (charcoal `#14161F` + neon cyan `#00FFE1`)
+- **Toolbar** with SVG-style icons + labels, grouped by function:
+  Session · Execution · Reset · Help
+- **Eight synchronized panels**:
+  - Process list (left, with live RSS / state)
+  - Disassembly x86-64 (center top, with INT3/RIP/arrow annotations)
+  - Memory hex dump (center middle, ASCII column)
+  - Stack view (center bottom, with symbol resolution)
+  - Registers (right top, RIP highlighted)
+  - Anti-Detect toggles (right middle, ON/OFF switches)
   - Threads (right bottom)
-  - Breakpoints (bottom)
-- ✅ Toolbar with Launch / Attach / Detach / Run / Pause / Step / Step In / Step Out / Restart / Kill / About
-- ✅ Status bar with live state, PID, anti-detect status
-- ✅ Modal dialogs: About, Process picker, PID input
-- ✅ Procedurally rendered ninja-mask logo (also available as SVG)
-- ✅ Keyboard shortcuts: F5 = Continue, F10 = Step, F11 = Step In, F8 = Pause
+  - Breakpoints (bottom strip, click to toggle)
+- **Modal dialogs**: About, Process picker (with search box), PID input
+- **Keyboard shortcuts**: F5 Continue · F8 Pause · F10 Step · F11 Step In · Esc Close
+
+### Custom rendering
+
+The ninja-mask logo is **rendered procedurally in Cairo** at 256×256 — gradients
+for the silk headband, radial glows for the eyes, an 8-pointed gold shuriken
+emblem, two crossed katanas with edge highlights, breathing slits on the lower
+mask, a CRT-style scanline overlay, and corner accent brackets. The same logo
+is also exported as a standalone `ninja_logo.svg` for use in documentation.
 
 ---
 
 ## 🛡️ Anti-Detect Techniques
 
-NinjaDBG exposes 8 toggleable stealth techniques. Each one defeats a specific
-anti-debugging check that the target may perform.
+NinjaDBG exposes eight toggleable stealth techniques. Each one defeats a
+specific anti-debugging check that the target may perform.
 
-| # | Technique | What it defeats |
-|---|-----------|-----------------|
-| 1 | **Hardware Breakpoints** | INT3 (0xCC) byte scanning of `.text` |
-| 2 | **process_vm_readv / writev** | ptrace-event observation via PTRACE_PEEKDATA counters |
-| 3 | **Mask /proc/self/status** | `TracerPid:` field read by target |
-| 4 | **Hide NinjaDBG mmaps** | Target enumerating its own address space looking for injected .so |
-| 5 | **Timing normalization** | RDTSC / clock_gettime delta checks |
-| 6 | **Parent name masquerade** | Reading `/proc/ppid/comm` to spot the debugger name |
-| 7 | **Hide from ps** | `readdir(/proc)` enumeration skipping suspicious parent processes |
-| 8 | **INT3 scan bypass** | Target scanning its own code for `0xCC` |
+| # | Technique | Defeats | How |
+|---|-----------|---------|-----|
+| 1 | **Hardware Breakpoints** | INT3 byte scans of `.text` | Uses DR0-DR3 debug registers; no `0xCC` written into target code |
+| 2 | **`process_vm_readv` / `writev`** | ptrace-event observation | Memory access uses `process_vm_readv(2)` instead of `PTRACE_PEEKDATA`, producing no ptrace signals the target can intercept |
+| 3 | **Mask `/proc/self/status`** | `TracerPid:` field read | Injects `libninjastealth.so` via `LD_PRELOAD`; hooks `open()` + `read()` to rewrite `TracerPid:\t0` even when actively traced |
+| 4 | **Hide NinjaDBG mmaps** | Target enumerating its address space | Filters NinjaDBG's own mmap regions from the target's `/proc/<pid>/maps` view |
+| 5 | **Timing normalization** | RDTSC / `clock_gettime` delta checks | Wraps timing syscalls in the preload payload to flatten measured deltas |
+| 6 | **Parent name masquerade** | `/proc/ppid/comm` inspection | Sets `argv[0] = "[kworker/u:1]"` so parent-process name reads as a benign kernel worker |
+| 7 | **Hide from ps** | `readdir(/proc)` enumeration | Renames the NinjaDBG comm field to skip past suspicious-process filters |
+| 8 | **INT3 scan bypass** | Self-`.text` scanning for `0xCC` | Disables software breakpoints entirely (migrates them to HW slots) when active |
 
 ### How the `TracerPid` mask works
 
-When NinjaDBG launches a target, it injects a small `LD_PRELOAD` payload
-(`libninjastealth.so`) that hooks `open(2)` and `read(2)`. When the target
-opens `/proc/self/status`, the hook remembers the file descriptor. When the
-target reads from that descriptor, the hook rewrites the `TracerPid:` line
-to `TracerPid:\t0` — even when the process is actively being traced.
+The `TracerPid:` field in `/proc/self/status` is the single most common
+Linux anti-debug check. A target reads the file, parses the line, and if the
+value is non-zero it knows it is being traced.
 
-This means the most common Linux anti-debug check — `TracerPid != 0` —
-returns a clean "no debugger" answer to the target, even while NinjaDBG
-holds full ptrace control.
+NinjaDBG defeats this with a tiny `LD_PRELOAD` library (`libninjastealth.so`,
+~15 KB) that intercepts `open(2)` and `read(2)`:
 
-The source for the preload payload is generated at runtime by the
-AntiDetect module (in `scripts/ninjastealth.c` after first run) and
-compiled to `build/libninjastealth.so`.
+1. When the target opens `/proc/self/status`, the hook remembers the file
+   descriptor.
+2. When the target reads from that descriptor, the hook scans the buffer for
+   `"TracerPid:"` and rewrites the line in-place to `"TracerPid:\t0"`.
+3. The target sees a clean "no debugger" answer — while NinjaDBG holds full
+   ptrace control behind the scenes.
+
+The source for the payload is generated at runtime by the AntiDetect module
+into `scripts/ninjastealth.c` and compiled on first run into
+`build/libninjastealth.so`.
+
+### Known limitation
+
+The preload mask requires the target to be **launched** under NinjaDBG (so
+that `LD_PRELOAD` is set in the child environment). Attaching to an
+already-running process can only mask `TracerPid` via a kernel module — out
+of scope for the 1.0.x series, planned for 2.0.
 
 ---
 
@@ -151,49 +144,57 @@ compiled to `build/libninjastealth.so`.
 
 ```
 NinjaDBG/
-├── Makefile                  — build system (g++, pkg-config)
-├── README.md                 — this file
-├── include/
-│   ├── Types.h               — common types (u8/u16/u32/u64/addr_t, structs)
-│   ├── DebuggerCore.h        — ptrace-based debugger core (public API)
-│   ├── AntiDetect.h          — stealth subsystem (technique mask + payload builder)
-│   ├── UITheme.h             — colors, fonts, layout constants
-│   └── MainWindow.h          — main X11+Cairo window controller
-├── src/
-│   ├── main.cpp              — entry point
-│   ├── DebuggerCore.cpp      — ptrace wrapper, attach/detach, breakpoints, regs, mem
-│   ├── AntiDetect.cpp        — technique registry, payload source generator
-│   ├── MainWindow.cpp        — X11 event loop, actions, toolbar, modals
-│   └── MainWindowPanels.cpp  — all panel painting (disasm, mem, regs, stack, etc.)
+├── Makefile                       Build system (g++ + pkg-config)
+├── README.md                      This file
 ├── resources/
-│   └── ninja_logo.svg        — ninja-mask logo (SVG, scalable)
+│   ├── ninja_logo.svg             Ninja-mask logo (SVG, 256×256)
+│   └── icons/                     Per-button SVG icons (11 files)
+├── include/
+│   ├── Types.h                    Common types & structs
+│   ├── DebuggerCore.h             ptrace-based core (public API)
+│   ├── AntiDetect.h               Stealth subsystem
+│   ├── UITheme.h                  Colors, fonts, layout constants
+│   └── MainWindow.h               X11+Cairo main window controller
+├── src/
+│   ├── main.cpp                   Entry point + screenshot orchestration
+│   ├── DebuggerCore.cpp           ptrace wrapper, attach, breakpoints, regs, mem
+│   ├── AntiDetect.cpp             Technique registry + payload source generator
+│   ├── MainWindow.cpp             X11 event loop, actions, toolbar, logo render
+│   └── MainWindowPanels.cpp       Panel painting (disasm, mem, regs, modals, …)
 ├── scripts/
-│   ├── target_test.cpp       — demo target with anti-debug check (TracerPid scan)
-│   ├── screenshot.cpp        — Xlib+libpng screenshot helper
-│   └── screenshot.sh         — Xvfb + screenshot orchestration
-└── build/                    — build output (created by make)
+│   ├── target_test.cpp            Demo target with a TracerPid anti-debug check
+│   ├── ninjastealth.c             Generated preload payload source
+│   ├── screenshot.cpp             Xlib+libpng screenshot helper
+│   └── screenshot.sh              Xvfb + screenshot orchestration
+└── build/                         Build output (created by `make`)
+    ├── ninjadb                    The debugger binary
+    ├── target_test                Demo target binary
+    ├── libninjastealth.so         Preload payload
+    └── screenshot                 Screenshot helper binary
 ```
 
-### Technology stack
+### Technology choices
 
 | Layer | Choice | Rationale |
 |-------|--------|-----------|
-| Language | C++17 | Modern, portable, low-overhead |
-| Debug API | `ptrace(2)` + `process_vm_readv/writev(2)` | Linux-native, no external deps |
-| UI | Xlib + Cairo + Pango | No Qt/GTK dependency, fully native |
-| Disassembly | Built-in (software) | No capstone dependency, predictable output |
+| Language | C++17 | Modern, portable, zero-runtime-overhead |
+| Debug API | `ptrace(2)` + `process_vm_readv(2)` / `writev(2)` | Linux-native, no external dependencies |
+| UI rendering | Xlib + Cairo + Pango | No Qt/GTK dependency, fully native, predictable |
+| Disassembly | Built-in software decoder | No capstone dependency, covers common x86-64 opcodes |
 | Image output | libpng | Direct PNG writing for screenshots |
-| Display server | X11 (Xvfb for headless) | Standard, universally available |
+| Display server | X11 (works under Xvfb for headless) | Standard, universally available |
+| Build system | Make + pkg-config | No CMake, no Meson — just `make` |
 
-The choice of Xlib over Qt/GTK is deliberate: a debugger should be a
-low-overhead, dependency-light tool. Xlib + Cairo gives us a fully native,
-professional dark UI with zero framework lock-in.
+The choice of **Xlib + Cairo over Qt or GTK** is deliberate. A debugger should
+be a low-overhead, dependency-light tool. Xlib gives us a fully native
+professional dark UI with zero framework lock-in. The binary is 256 KB
+stripped.
 
 ---
 
-## 🚀 Building
+## 📦 Build
 
-### Prerequisites (Debian/Ubuntu)
+### Prerequisites (Debian 13 / Ubuntu 24.04+)
 
 ```bash
 sudo apt-get install build-essential \
@@ -213,14 +214,23 @@ make -j4
 ```
 
 This produces:
-- `build/ninjadb` — the debugger binary
-- `build/target_test` — a small demo target with a `TracerPid:` anti-debug check
-- `build/libninjastealth.so` — preload payload (auto-built on first run)
-- `build/screenshot` — Xlib+libpng screenshot helper
+
+| Artifact | Path | Size (approx) |
+|----------|------|----------------|
+| Debugger binary | `build/ninjadb` | 260 KB |
+| Demo target | `build/target_test` | 17 KB |
+| Preload payload | `build/libninjastealth.so` | 15 KB |
+| Screenshot helper | `build/screenshot` | 23 KB |
+
+### Clean rebuild
+
+```bash
+make clean && make -j4
+```
 
 ---
 
-## 🎮 Running
+## 🚀 Run
 
 ### With a real X server
 
@@ -235,7 +245,7 @@ Xvfb :99 -screen 0 1920x1200x24 -ac +extension RANDR -noreset &
 DISPLAY=:99 ./build/ninjadb
 ```
 
-### Demo target
+### Demo target workflow
 
 In one terminal:
 
@@ -250,20 +260,32 @@ In another terminal:
 
 ```bash
 ./build/ninjadb
-# Click [Attach] in the toolbar, select `target_test`, click [Attach]
-# Notice: the target's "Anti-debug: TracerPid=NNNN detected!" message
-# never fires, because the preload payload masks TracerPid: to 0.
+# Click [Attach] → select `target_test` → click [Attach]
+# Notice: the target's "Anti-debug: TracerPid=NNNN detected!" never fires,
+# because libninjastealth.so rewrites TracerPid: to 0.
 ```
+
+### Environment variables (for screenshots / automation)
+
+| Variable | Effect |
+|----------|--------|
+| `NINJADBG_SHOW_ABOUT=1` | Auto-open the About modal 200 ms after launch |
+| `NINJADBG_DEMO_ATTACH=1` | Auto-attach to a running `target_test` process if found |
 
 ---
 
-## 🎨 Screenshot
+## 🖼️ Screenshots
 
-A screenshot of the v1.0.1 UI (attached to the demo target) is included
-at `download/ninjadb_attached.png`.
+| Screenshot | Description |
+|------------|-------------|
+| `download/ninjadb_v1.0.2.png` | Main UI attached to a live process — full panels visible |
+| `download/ninjadb_about_v1.0.2.png` | About modal with the redesigned logo and anti-detect technique list |
 
-The About modal (with the ninja-mask logo) is at
-`download/ninjadb_about.png`.
+To regenerate screenshots:
+
+```bash
+make screenshot
+```
 
 ---
 
@@ -271,23 +293,27 @@ The About modal (with the ninja-mask logo) is at
 
 | Key | Action |
 |-----|--------|
-| F5  | Continue execution |
-| F8  | Pause |
-| F10 | Step over |
-| F11 | Step into |
-| Esc | Close modal dialog |
+| **F5** | Continue execution |
+| **F8** | Pause |
+| **F10** | Step over |
+| **F11** | Step into |
+| **Esc** | Close modal dialog |
 
 ---
 
 ## 🗺️ Roadmap
 
-Future versions may include:
-- v1.1: Conditional breakpoints (string + numeric conditions)
-- v1.2: Watchpoints (memory access breakpoints via DR0-DR3 with RW/LEN fields)
-- v1.3: Remote debugging over TCP (gdbserver-style protocol)
-- v1.4: Embedded Capstone for full x86-64 disassembly
-- v1.5: Scripting via Lua (auto-stepping, conditional logging)
-- v2.0: Multi-process debugging with tabbed UI
+| Version | Target | Status |
+|---------|--------|--------|
+| 1.0.0 | Initial ptrace core + UI | ✅ Released |
+| 1.0.1 | AntiDetect module + preload payload | ✅ Released |
+| **1.0.2** | **UI polish: SVG icons, modal fixes, logo redesign, README rewrite** | ✅ **Released (this)** |
+| 1.1.0 | Conditional breakpoints (numeric + string conditions) | 🔜 Planned |
+| 1.2.0 | Watchpoints (memory-access breakpoints via DR0-DR3 RW/LEN fields) | 🔜 Planned |
+| 1.3.0 | Remote debugging over TCP (gdbserver-style protocol) | 🔜 Planned |
+| 1.4.0 | Embed Capstone for full x86-64 disassembly | 🔜 Planned |
+| 1.5.0 | Lua scripting (auto-stepping, conditional logging) | 🔜 Planned |
+| 2.0.0 | Kernel module for `TracerPid` masking on already-running processes | 🔜 Planned |
 
 These dates are not commitments — Chapzoo works on this in spare time.
 
@@ -295,17 +321,51 @@ These dates are not commitments — Chapzoo works on this in spare time.
 
 ## 🐛 Known Limitations
 
-- The `TracerPid` mask requires the target to be launched under NinjaDBG
-  with `LD_PRELOAD`. Attaching to an already-running process can only
-  mask `TracerPid` via a kernel module (out of scope for v1.0.1).
-- Hardware breakpoints are limited to 4 concurrent slots (DR0-DR3, x86
-  hardware constraint, not a NinjaDBG limitation).
-- The built-in disassembler covers common opcodes but is not a complete
-  x86-64 decoder. Unusual instructions fall back to `db 0xXX`.
-- No GUI for editing memory in-place yet (use the console command `set`
-  once it lands in v1.1).
-- The UI is single-threaded; very large memory dumps may briefly stall
-  the event loop.
+- **Preload-mask requirement**: the `TracerPid` mask needs the target to be
+  launched under NinjaDBG. Attaching to an already-running process can only
+  mask `TracerPid` via a kernel module (planned for 2.0).
+- **Hardware breakpoint slots**: limited to 4 concurrent (DR0-DR3) — an x86
+  hardware constraint, not a NinjaDBG limitation.
+- **Software disassembler**: covers common opcodes; unusual instructions
+  fall back to `db 0xXX`. Embedding Capstone (1.4.0) will resolve this.
+- **No in-place memory editing GUI** yet — planned for 1.1.0.
+- **Single-threaded UI**: very large memory dumps may briefly stall the
+  event loop. A background-thread memory cache is planned for 1.3.0.
+
+---
+
+## ⚖️ License
+
+**NinjaDBG is Closed Source but 100% Free.**
+
+| Right | Status |
+|-------|--------|
+| Use — personal, academic, commercial | ✅ Allowed |
+| Redistribute verbatim binaries | ✅ Allowed |
+| Modify / patch binaries | ❌ Not allowed |
+| Reverse-engineer / decompile | ❌ Not allowed |
+| Sublicense / relicense | ❌ Not allowed |
+| Hold author liable | ❌ No warranty, use at your own risk |
+
+The source code is **private** and is **not** published. This README, the SVG
+logo, the per-button SVG icons, the public API surface, and the compiled
+artifacts are the only distributed materials.
+
+By downloading or running NinjaDBG you accept full responsibility for any
+damage caused to your system or data. The author provides **no warranty**,
+express or implied.
+
+---
+
+## 👤 Author
+
+**Chapzoo** — solo developer.
+
+NinjaDBG is the work of a single person. All design, implementation, testing,
+UI rendering, logo artwork, documentation, and distribution is done by
+Chapzoo. There is no team, no company, no external contributor agreement, and
+no funding model. Bug reports and feature requests are welcome; pull requests
+are not, since the source is closed.
 
 ---
 
@@ -316,7 +376,10 @@ Source code is **not** distributed — please don't ask.
 
 ---
 
-<p align="center">
-  <em>NinjaDBG v1.0.1 — Closed Source, Free, by Chapzoo</em><br/>
-  <em>Stay stealthy. 🥷</em>
-</p>
+<div align="center">
+
+**NinjaDBG v1.0.2** · Closed Source · Free · by **Chapzoo**
+
+*Stay stealthy.* 🥷
+
+</div>

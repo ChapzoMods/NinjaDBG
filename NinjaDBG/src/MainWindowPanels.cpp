@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.1 - MainWindow implementation (part 2: painting & panels)
+// NinjaDBG v1.0.2 - MainWindow implementation (part 2: painting & panels)
 // Closed Source - Free - by Chapzoo
 #include "MainWindow.h"
 #include "UITheme.h"
@@ -74,6 +74,32 @@ void MainWindow::drawText(const std::string& s, int x, int y, u32 color,
 
 void MainWindow::drawMono(const std::string& s, int x, int y, u32 color, int size) {
     drawText(s, x, y, color, font::Mono, size);
+}
+
+int MainWindow::textWidth(const std::string& s, const char* family, int size) {
+    PangoLayout* lay = pango_cairo_create_layout(cr_);
+    PangoFontDescription* fd = pango_font_description_new();
+    pango_font_description_set_family(fd, family);
+    pango_font_description_set_size(fd, size * PANGO_SCALE);
+    pango_layout_set_font_description(lay, fd);
+    pango_font_description_free(fd);
+    pango_layout_set_text(lay, s.c_str(), s.size());
+    int w, h;
+    pango_layout_get_pixel_size(lay, &w, &h);
+    g_object_unref(lay);
+    return w;
+}
+
+void MainWindow::drawSeparator(int x, int y, int h) {
+    set_color(cr_, col::Border);
+    cairo_set_line_width(cr_, 1.0);
+    cairo_move_to(cr_, x + 0.5, y);
+    cairo_line_to(cr_, x + 0.5, y + h);
+    cairo_stroke(cr_);
+    // Subtle accent dot
+    set_color(cr_, col::Accent_Dim);
+    cairo_arc(cr_, x + 0.5, y + h/2.0, 1.2, 0, 2*M_PI);
+    cairo_fill(cr_);
 }
 
 void MainWindow::drawPanel(LayoutRect r, const std::string& title) {
@@ -363,56 +389,106 @@ void MainWindow::paint() {
 }
 
 void MainWindow::paintToolbar(LayoutRect r) {
-    fillRect(r, col::BG_Elevated);
-    // Bottom accent
+    // Background gradient
+    cairo_pattern_t* tg = cairo_pattern_create_linear(0, r.y, 0, r.y + r.h);
+    cairo_pattern_add_color_stop_rgb(tg, 0.0, 0.145, 0.165, 0.251);
+    cairo_pattern_add_color_stop_rgb(tg, 1.0, 0.10, 0.12, 0.20);
+    cairo_set_source(cr_, tg);
+    cairo_rectangle(cr_, r.x, r.y, r.w, r.h);
+    cairo_fill(cr_);
+    cairo_pattern_destroy(tg);
+
+    // Bottom accent line (double)
+    set_color(cr_, col::Accent);
+    cairo_set_line_width(cr_, 1.0);
+    cairo_move_to(cr_, r.x, r.y + r.h - 1.5);
+    cairo_line_to(cr_, r.x + r.w, r.y + r.h - 1.5);
+    cairo_stroke(cr_);
     set_color(cr_, col::Accent_Dim);
-    cairo_set_line_width(cr_, 2);
-    cairo_move_to(cr_, r.x, r.y + r.h - 1);
-    cairo_line_to(cr_, r.x + r.w, r.y + r.h - 1);
+    cairo_move_to(cr_, r.x, r.y + r.h - 0.5);
+    cairo_line_to(cr_, r.x + r.w, r.y + r.h - 0.5);
     cairo_stroke(cr_);
 
-    // Logo (left)
+    // === Logo (left) ===
     if (logo_surf_) {
-        int ls = 40;
+        int ls = 48;
         cairo_save(cr_);
-        cairo_scale(cr_, (double)ls/128, (double)ls/128);
-        cairo_set_source_surface(cr_, logo_surf_, 8.0*128/ls, 8.0*128/ls);
+        cairo_scale(cr_, (double)ls/256, (double)ls/256);
+        cairo_set_source_surface(cr_, logo_surf_, 8.0*256/ls, (r.y + 8)*256/ls);
         cairo_paint(cr_);
         cairo_restore(cr_);
     }
-    // Title
-    drawText("NinjaDBG", 56, 12, col::Text, font::Title, 16);
-    drawText("v1.0.1", 56, 32, col::Accent, font::Sans, 10);
+    // Title + version (right of logo)
+    drawText("NinjaDBG", 64, r.y + 14, col::Text, font::Title, 18);
+    drawText("v1.0.2", 64, r.y + 36, col::Accent, font::Mono, 10);
+    // Subtitle
+    drawText("Stealth Debugger", 144, r.y + 14, col::Text_Dim, font::Sans, 11);
+    drawText("by Chapzoo", 144, r.y + 30, col::Text_Muted, font::Sans, 10);
 
-    // Buttons
-    int bx = 160;
-    int by = (r.h - 32) / 2;
-    int gap = 4;
+    // === Buttons ===
+    int bx = 290;
+    int by = (r.h - lay::BTN_H) / 2;
+    int gap = lay::BTN_GAP;
+
     for (auto& b : toolbar_buttons_) {
         if (b.label == "|") {
-            // separator
-            set_color(cr_, col::Border);
-            cairo_set_line_width(cr_, 1);
-            cairo_move_to(cr_, bx + 4, by + 4);
-            cairo_line_to(cr_, bx + 4, by + 28);
-            cairo_stroke(cr_);
-            bx += 12;
+            // Separator
+            drawSeparator(bx + lay::SEPARATOR_W/2, by + 6, lay::BTN_H - 12);
+            bx += lay::SEPARATOR_W + gap;
             continue;
         }
-        bool en = (dbg_.pid() != 0) || (b.label == "Launch" || b.label == "Attach" || b.label == "About");
+        bool en = (dbg_.pid() != 0) ||
+                  (b.label == "Launch" || b.label == "Attach" || b.label == "About");
         b.enabled = en;
-        LayoutRect br = { bx, by, 0, 32 };
-        int text_w = b.label.size() * 7 + 16;
-        br.w = text_w;
+
+        // Compute button width: icon + gap + label + horizontal padding
+        int icon_sz = lay::BTN_ICON_SZ;
+        int label_w = textWidth(b.label, font::Sans, 12);
+        int btn_w = lay::BTN_PAD_X + icon_sz + 6 + label_w + lay::BTN_PAD_X;
+
+        LayoutRect br = { bx, by, btn_w, lay::BTN_H };
         b.rect = br;
 
-        u32 bg = b.pressed ? col::BG_Hover : (b.hover ? col::BG_Hover : col::BG_Panel);
-        u32 fg = en ? (b.hover ? col::Accent : col::Text) : col::Text_Muted;
-        fillRounded(br, 5, bg);
+        // Background (state-dependent)
+        u32 bg;
+        if (!en)              bg = 0xFF1A1D2A;     // disabled
+        else if (b.pressed)   bg = col::BG_Hover;
+        else if (b.hover)     bg = col::BG_Hover;
+        else                  bg = col::BG_Panel;
+
+        fillRounded(br, 6, bg);
+
+        // Border
         if (b.hover && en) {
-            strokeRounded(br, 5, col::Accent_Dim, 1);
+            strokeRounded(br, 6, col::Accent, 1.0);
+        } else if (en) {
+            strokeRounded(br, 6, col::BorderLite, 1.0);
+        } else {
+            strokeRounded(br, 6, 0xFF1F2230, 1.0);
         }
-        drawText(b.label, br.x + 8, br.y + 9, fg, font::Sans, 12);
+
+        // Icon (centered vertically, left aligned with padding)
+        int icon_x = br.x + lay::BTN_PAD_X;
+        int icon_y = br.y + (br.h - icon_sz) / 2;
+        u32 icon_color = en ? (b.hover ? col::Accent : col::Text) : col::Text_Muted;
+        drawIcon(b.icon, icon_x, icon_y, icon_sz, icon_color);
+
+        // Label
+        int label_x = icon_x + icon_sz + 6;
+        int label_y = br.y + (br.h - 12) / 2 + 1;
+        u32 fg = en ? (b.hover ? col::Accent : col::Text) : col::Text_Muted;
+        drawText(b.label, label_x, label_y, fg, font::Sans, 12);
+
+        // Tooltip-ish hint (small dim text under button when hovered)
+        if (b.hover && en) {
+            // Subtle accent underline
+            set_color(cr_, col::Accent);
+            cairo_set_line_width(cr_, 1.5);
+            cairo_move_to(cr_, br.x + 6, br.y + br.h - 2.5);
+            cairo_line_to(cr_, br.x + br.w - 6, br.y + br.h - 2.5);
+            cairo_stroke(cr_);
+        }
+
         bx += br.w + gap;
     }
 }
@@ -674,111 +750,260 @@ void MainWindow::drawBreakpoints(LayoutRect r) {
 
 void MainWindow::paintAboutModal() {
     // Dim background
-    set_color_rgba(cr_, 0, 0, 0, 0.6);
+    set_color_rgba(cr_, 0, 0, 0, 0.78);
     cairo_paint(cr_);
 
-    LayoutRect r = { win_w_/2 - 250, win_h_/2 - 200, 500, 400 };
-    fillRounded(r, 12, col::BG_Panel);
-    strokeRounded(r, 12, col::Accent, 2);
+    // Modal panel — generous size, all content fits
+    int MW = 760;
+    int MH = 620;
+    LayoutRect r = { (win_w_ - MW) / 2, (win_h_ - MH) / 2, MW, MH };
 
-    // Logo
+    // Drop shadow
+    set_color_rgba(cr_, 0, 0, 0, 0.5);
+    cairo_rectangle(cr_, r.x + 6, r.y + 8, r.w, r.h);
+    cairo_fill(cr_);
+
+    // Panel background
+    fillRounded(r, 14, col::BG_Panel);
+    strokeRounded(r, 14, col::Accent, 2.0);
+
+    // Top accent bar
+    LayoutRect top_bar = { r.x, r.y, r.w, 4 };
+    fillRounded(top_bar, 2, col::Accent);
+
+    // === Logo (centered, large) ===
+    int logo_sz = 180;
     if (logo_surf_) {
-        int ls = 120;
+        int lx = r.x + (r.w - logo_sz) / 2;
+        int ly = r.y + 30;
         cairo_save(cr_);
-        cairo_scale(cr_, (double)ls/128, (double)ls/128);
-        cairo_set_source_surface(cr_, logo_surf_,
-            (r.x + (r.w - ls)/2) * 128.0/ls, (r.y + 24) * 128.0/ls);
+        cairo_scale(cr_, (double)logo_sz/256, (double)logo_sz/256);
+        cairo_set_source_surface(cr_, logo_surf_, lx*256.0/logo_sz, ly*256.0/logo_sz);
         cairo_paint(cr_);
         cairo_restore(cr_);
     }
 
-    int y = r.y + 160;
-    drawText("NinjaDBG", r.x + r.w/2 - 60, y, col::Text, font::Title, 28);
-    y += 36;
-    drawText("Version 1.0.1  -  Stealth Debugger", r.x + r.w/2 - 100, y, col::Accent, font::Sans, 14);
-    y += 28;
-    drawText("Closed Source  -  Free for all uses", r.x + r.w/2 - 110, y, col::Text_Dim, font::Sans, 12);
-    y += 22;
-    drawText("Created by Chapzoo (one person)", r.x + r.w/2 - 110, y, col::Text, font::Sans, 12);
-    y += 30;
-    drawText("Anti-detect techniques:", r.x + r.w/2 - 100, y, col::Warn, font::Sans, 12);
-    y += 20;
+    // === Title (centered, large) ===
+    int title_y = r.y + 30 + logo_sz + 14;
+    std::string title = "NinjaDBG";
+    int tw = textWidth(title, font::Title, 36);
+    drawText(title, r.x + (r.w - tw) / 2, title_y, col::Text, font::Title, 36);
+
+    // Version line (centered)
+    int vy = title_y + 44;
+    std::string ver = "Version 1.0.2  -  Stealth Debugger";
+    int vw = textWidth(ver, font::Sans, 14);
+    drawText(ver, r.x + (r.w - vw) / 2, vy, col::Accent, font::Sans, 14);
+
+    // License / Author
+    int ly = vy + 28;
+    std::string lic = "Closed Source  -  Free for all uses";
+    int lw = textWidth(lic, font::Sans, 12);
+    drawText(lic, r.x + (r.w - lw) / 2, ly, col::Text_Dim, font::Sans, 12);
+    ly += 22;
+    std::string author = "Created by Chapzoo  (one person)";
+    int aw = textWidth(author, font::Sans, 12);
+    drawText(author, r.x + (r.w - aw) / 2, ly, col::Text, font::Sans, 12);
+
+    // === Anti-detect techniques (two columns) ===
+    int section_y = ly + 32;
+    std::string sec = "Anti-Detect Techniques";
+    int sw = textWidth(sec, font::Title, 13);
+    drawText(sec, r.x + (r.w - sw) / 2, section_y, col::Warn, font::Title, 13);
+
+    // Divider
+    set_color(cr_, col::Border);
+    cairo_set_line_width(cr_, 1.0);
+    cairo_move_to(cr_, r.x + 80, section_y + 22);
+    cairo_line_to(cr_, r.x + r.w - 80, section_y + 22);
+    cairo_stroke(cr_);
+
     auto techs = AntiDetect::allTechniques();
+    int list_y = section_y + 36;
+    int col_w = (r.w - 80) / 2;
+    int row_h = 24;
+    int half = ((int)techs.size() + 1) / 2;
     for (size_t i = 0; i < techs.size(); i++) {
-        std::string s = std::string("  \xE2\x9C\x93  ") + AntiDetect::name(techs[i]);
-        drawText(s, r.x + r.w/2 - 100, y,
-                 anti_.isEnabled(techs[i]) ? col::OK : col::Text_Muted, font::Sans, 11);
-        y += 16;
+        int col = (int)i < half ? 0 : 1;
+        int row = (int)i < half ? (int)i : (int)i - half;
+        int px = r.x + 40 + col * col_w;
+        int py = list_y + row * row_h;
+
+        bool on = anti_.isEnabled(techs[i]);
+        // Checkmark circle
+        set_color(cr_, on ? col::OK : col::Text_Muted);
+        cairo_arc(cr_, px + 6, py + 8, 5, 0, 2*M_PI);
+        cairo_fill(cr_);
+        set_color(cr_, on ? 0xFF0A1F18 : 0xFF1F2230);
+        cairo_set_line_width(cr_, 1.5);
+        cairo_move_to(cr_, px + 3, py + 8);
+        cairo_line_to(cr_, px + 5.5, py + 10.5);
+        cairo_line_to(cr_, px + 9, py + 5.5);
+        cairo_stroke(cr_);
+
+        // Technique name
+        drawText(AntiDetect::name(techs[i]), px + 18, py + 2,
+                 on ? col::Text : col::Text_Muted, font::Sans, 11);
+        // Status badge
+        std::string st = on ? "ON" : "OFF";
+        int stw = textWidth(st, font::Mono, 10);
+        drawText(st, px + col_w - 60 - stw, py + 4,
+                 on ? col::OK : col::Text_Muted, font::Mono, 10);
     }
 
-    drawText("Click anywhere to close", r.x + r.w/2 - 60, r.y + r.h - 24,
+    // === Footer hint ===
+    std::string hint = "Click anywhere to close  -  Press Esc";
+    int hw = textWidth(hint, font::Sans, 10);
+    drawText(hint, r.x + (r.w - hw) / 2, r.y + r.h - 24,
              col::Text_Muted, font::Sans, 10);
 }
 
 void MainWindow::paintProcessPickerModal() {
-    set_color_rgba(cr_, 0, 0, 0, 0.7);
+    set_color_rgba(cr_, 0, 0, 0, 0.78);
     cairo_paint(cr_);
 
-    LayoutRect r = { lay::PAD*4, lay::TOOLBAR_H + 60, win_w_ - lay::PAD*8, win_h_ - lay::TOOLBAR_H - 100 };
-    fillRounded(r, 8, col::BG_Panel);
-    strokeRounded(r, 8, col::Accent, 1.5);
+    int MW = std::min(1100, win_w_ - 80);
+    int MH = std::min(720, win_h_ - lay::TOOLBAR_H - 80);
+    LayoutRect r = { (win_w_ - MW) / 2, (win_h_ - MH) / 2, MW, MH };
 
-    // Title
-    drawText("Select Process to Attach", r.x + 16, r.y + 12, col::Accent, font::Title, 16);
-    drawText("Use Up/Down to navigate, click Attach or press Esc to cancel",
-             r.x + 16, r.y + 34, col::Text_Dim, font::Sans, 11);
+    // Shadow
+    set_color_rgba(cr_, 0, 0, 0, 0.5);
+    cairo_rectangle(cr_, r.x + 6, r.y + 8, r.w, r.h);
+    cairo_fill(cr_);
 
-    LayoutRect inner = { r.x + 16, r.y + 60, r.w - 32, r.h - 100 };
-    drawMono("PID     NAME                                            MEM(kB)  STATE",
+    fillRounded(r, 12, col::BG_Panel);
+    strokeRounded(r, 12, col::Accent, 1.5);
+
+    // Top accent bar
+    LayoutRect top_bar = { r.x, r.y, r.w, 4 };
+    fillRounded(top_bar, 2, col::Accent);
+
+    // Header
+    drawText("Select Process to Attach", r.x + 24, r.y + 18, col::Accent, font::Title, 18);
+    drawText("Use Up/Down to navigate  -  click Attach or press Esc to cancel",
+             r.x + 24, r.y + 44, col::Text_Dim, font::Sans, 11);
+
+    // Search bar (decorative)
+    LayoutRect sb = { r.x + 24, r.y + 64, r.w - 48, 28 };
+    fillRounded(sb, 4, col::BG);
+    strokeRounded(sb, 4, col::Border, 1);
+    drawText("Filter processes by name or PID...", sb.x + 10, sb.y + 7, col::Text_Muted, font::Sans, 11);
+    // Magnifier icon
+    set_color(cr_, col::Text_Muted);
+    cairo_set_line_width(cr_, 1.5);
+    cairo_arc(cr_, sb.x + sb.w - 18, sb.y + 13, 5, 0, 2*M_PI);
+    cairo_stroke(cr_);
+    cairo_move_to(cr_, sb.x + sb.w - 14, sb.y + 17);
+    cairo_line_to(cr_, sb.x + sb.w - 10, sb.y + 21);
+    cairo_stroke(cr_);
+
+    // List area
+    LayoutRect inner = { r.x + 24, r.y + 104, r.w - 48, r.h - 104 - 60 };
+
+    // Column header
+    fillRect({inner.x - 4, inner.y - 4, inner.w + 8, 22}, col::BG_Elevated);
+    drawMono("PID      NAME                                                          MEM(kB)  ST",
              inner.x, inner.y, col::Text_Dim, 11);
-    int y = inner.y + 16;
-    int max_rows = (inner.h - 16) / 16;
+
+    int y = inner.y + 22;
+    int row_h = 20;
+    int max_rows = (inner.h - 22) / row_h;
     for (int i = 0; i < (int)proc_list_.size() && i < max_rows; i++) {
         auto& p = proc_list_[i];
         bool sel = (i == proc_selected_);
         if (sel) {
-            fillRect({inner.x - 4, y - 2, inner.w + 8, 16}, col::BG_Selected);
+            fillRounded({inner.x - 6, y - 2, inner.w + 12, row_h}, 3, col::BG_Selected);
+            // Left accent
+            set_color(cr_, col::Accent);
+            cairo_rectangle(cr_, inner.x - 6, y - 2, 3, row_h);
+            cairo_fill(cr_);
         }
         std::ostringstream s;
-        s << std::left << std::setw(6) << p.pid << "  "
-          << std::setw(46) << (p.name.size() > 46 ? p.name.substr(0, 43) + "..." : p.name) << "  "
+        std::string name = p.name;
+        if (name.size() > 50) name = name.substr(0, 47) + "...";
+        s << std::left << std::setw(7) << p.pid << "  "
+          << std::setw(54) << name << "  "
           << std::right << std::setw(8) << p.memory_kb << "  "
-          << std::left << std::setw(4) << p.state;
-        drawMono(s.str(), inner.x, y, sel ? col::Accent : col::Text, 11);
-        y += 16;
+          << std::left << std::setw(2) << p.state;
+        drawMono(s.str(), inner.x, y + 2, sel ? col::Accent : col::Text, 11);
+        y += row_h;
     }
 
+    // Footer
+    set_color(cr_, col::Border);
+    cairo_set_line_width(cr_, 1.0);
+    cairo_move_to(cr_, r.x, r.y + r.h - 48);
+    cairo_line_to(cr_, r.x + r.w, r.y + r.h - 48);
+    cairo_stroke(cr_);
+
+    // Count
+    std::ostringstream cc;
+    cc << proc_list_.size() << " processes";
+    drawText(cc.str(), r.x + 24, r.y + r.h - 32, col::Text_Muted, font::Sans, 11);
+
     // Footer buttons
-    LayoutRect ab = { r.x + r.w - 220, r.y + r.h - 36, 90, 28 };
-    LayoutRect cb = { r.x + r.w - 110, r.y + r.h - 36, 90, 28 };
-    fillRounded(ab, 5, col::Accent_Dim);
-    drawText("Attach", ab.x + 20, ab.y + 7, col::Text, font::Sans, 12);
-    fillRounded(cb, 5, col::BG_Hover);
-    drawText("Cancel", cb.x + 20, cb.y + 7, col::Text, font::Sans, 12);
+    LayoutRect ab = { r.x + r.w - 220, r.y + r.h - 40, 90, 30 };
+    LayoutRect cb = { r.x + r.w - 120, r.y + r.h - 40, 90, 30 };
+    fillRounded(ab, 6, col::Accent_Dim);
+    strokeRounded(ab, 6, col::Accent, 1.0);
+    drawText("Attach", ab.x + 24, ab.y + 8, col::Text, font::Sans, 12);
+    fillRounded(cb, 6, col::BG_Hover);
+    strokeRounded(cb, 6, col::Border, 1.0);
+    drawText("Cancel", cb.x + 22, cb.y + 8, col::Text, font::Sans, 12);
 }
 
 void MainWindow::paintAttachInputModal() {
-    set_color_rgba(cr_, 0, 0, 0, 0.7);
+    set_color_rgba(cr_, 0, 0, 0, 0.78);
     cairo_paint(cr_);
 
-    LayoutRect r = { win_w_/2 - 200, win_h_/2 - 60, 400, 130 };
-    fillRounded(r, 8, col::BG_Panel);
-    strokeRounded(r, 8, col::Accent, 1.5);
+    int MW = 460;
+    int MH = 200;
+    LayoutRect r = { (win_w_ - MW) / 2, (win_h_ - MH) / 2, MW, MH };
 
-    drawText("Enter PID to attach", r.x + 16, r.y + 12, col::Accent, font::Title, 14);
-    drawText("(Type digits, Enter to confirm, Esc to cancel)", r.x + 16, r.y + 36, col::Text_Dim, font::Sans, 10);
+    // Shadow
+    set_color_rgba(cr_, 0, 0, 0, 0.5);
+    cairo_rectangle(cr_, r.x + 6, r.y + 8, r.w, r.h);
+    cairo_fill(cr_);
 
-    LayoutRect ib = { r.x + 16, r.y + 56, r.w - 32, 26 };
-    fillRounded(ib, 4, col::BG);
-    strokeRounded(ib, 4, col::Border, 1);
-    drawMono(attach_input_ + "_", ib.x + 8, ib.y + 6, col::Accent, 13);
+    fillRounded(r, 12, col::BG_Panel);
+    strokeRounded(r, 12, col::Accent, 1.5);
 
-    LayoutRect ok = { r.x + 200, r.y + 92, 80, 26 };
-    LayoutRect ca = { r.x + 290, r.y + 92, 80, 26 };
-    fillRounded(ok, 5, col::Accent_Dim);
-    drawText("OK", ok.x + 30, ok.y + 5, col::Text, font::Sans, 12);
-    fillRounded(ca, 5, col::BG_Hover);
-    drawText("Cancel", ca.x + 18, ca.y + 5, col::Text, font::Sans, 12);
+    // Top accent bar
+    LayoutRect top_bar = { r.x, r.y, r.w, 4 };
+    fillRounded(top_bar, 2, col::Accent);
+
+    // Icon (info circle)
+    drawIcon("attach", r.x + 24, r.y + 22, 28, col::Accent);
+
+    // Title
+    drawText("Enter PID to Attach", r.x + 64, r.y + 22, col::Accent, font::Title, 16);
+    drawText("Type the PID of the process to debug.",
+             r.x + 64, r.y + 46, col::Text_Dim, font::Sans, 11);
+    drawText("Press Enter to confirm  -  Esc to cancel",
+             r.x + 64, r.y + 62, col::Text_Muted, font::Sans, 10);
+
+    // Input box
+    LayoutRect ib = { r.x + 24, r.y + 96, r.w - 48, 36 };
+    fillRounded(ib, 6, col::BG);
+    strokeRounded(ib, 6, col::Accent_Dim, 1);
+    // Cursor blink
+    std::string text = attach_input_;
+    if ((::clock() / (CLOCKS_PER_SEC / 4)) % 2 == 0) text += "_";
+    drawMono(text.empty() ? "_" : text, ib.x + 12, ib.y + 10, col::Accent, 14);
+    // Hint label inside
+    if (attach_input_.empty()) {
+        drawText("e.g. 12345", ib.x + 12, ib.y + 10, col::Text_Muted, font::Mono, 13);
+    }
+
+    // Buttons
+    LayoutRect ok = { r.x + r.w - 220, r.y + r.h - 44, 90, 30 };
+    LayoutRect ca = { r.x + r.w - 120, r.y + r.h - 44, 90, 30 };
+    fillRounded(ok, 6, col::Accent_Dim);
+    strokeRounded(ok, 6, col::Accent, 1.0);
+    drawText("OK", ok.x + 36, ok.y + 8, col::Text, font::Sans, 12);
+    fillRounded(ca, 6, col::BG_Hover);
+    strokeRounded(ca, 6, col::Border, 1.0);
+    drawText("Cancel", ca.x + 22, ca.y + 8, col::Text, font::Sans, 12);
 }
 
 } // namespace ndbg::ui

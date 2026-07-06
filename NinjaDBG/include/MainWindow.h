@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.1 - Main Window & App Controller
+// NinjaDBG v1.0.2 - Main Window & App Controller
 // Closed Source - Free - by Chapzoo
 #pragma once
 
@@ -16,6 +16,7 @@
 #include <vector>
 #include <functional>
 #include <memory>
+#include <map>
 
 namespace ndbg::ui {
 
@@ -144,7 +145,7 @@ private:
     // Buttons
     struct Button {
         std::string label;
-        std::string icon;
+        std::string icon;          // icon key (e.g. "launch", "attach")
         LayoutRect  rect;
         std::function<void()> action;
         bool enabled = true;
@@ -156,9 +157,14 @@ private:
     void buildToolbar();
     Button* hitButton(int x, int y);
 
-    // Logo surface (cairo)
+    // Logo surface (cairo) - large detailed version
     cairo_surface_t* logo_surf_ = nullptr;
     cairo_surface_t* loadLogo();
+
+    // Toolbar icon surfaces (key -> cairo surface)
+    std::map<std::string, cairo_surface_t*> icon_surfs_;
+    void loadToolbarIcons();
+    void drawIcon(const std::string& key, int x, int y, int size, u32 color);
 
     // Process list cache
     std::vector<ProcessInfo> proc_cache_;
@@ -179,10 +185,12 @@ private:
     void drawPanel(LayoutRect r, const std::string& title);
     void drawText(const std::string& s, int x, int y, u32 color, const char* font_family, int size);
     void drawMono(const std::string& s, int x, int y, u32 color, int size);
+    int  textWidth(const std::string& s, const char* font_family, int size);
     void fillRect(LayoutRect r, u32 color);
     void strokeRect(LayoutRect r, u32 color, double lw = 1.0);
     void fillRounded(LayoutRect r, double radius, u32 color);
     void strokeRounded(LayoutRect r, double radius, u32 color, double lw);
+    void drawSeparator(int x, int y, int h);
 
     // Disassembly & memory views
     void drawDisassembly(LayoutRect r);

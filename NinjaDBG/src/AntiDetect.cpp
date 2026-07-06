@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.1 - AntiDetect implementation
+// NinjaDBG v1.0.2 - AntiDetect implementation
 // Closed Source - Free - by Chapzoo
 #include "AntiDetect.h"
 #include <fstream>

@@ -1,4 +1,4 @@
-# NinjaDBG v1.0.1 - Build System
+# NinjaDBG v1.0.2 - Build System
 # Closed Source - Free - by Chapzoo
 CXX      := g++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-unused-but-set-variable \
