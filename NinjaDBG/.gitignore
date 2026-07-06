@@ -1,0 +1,24 @@
+# Build artifacts
+build/
+*.o
+*.ko
+*.so
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+*.bak
+/tmp/
+
+# Secrets - never commit tokens
+*.token
+.env
