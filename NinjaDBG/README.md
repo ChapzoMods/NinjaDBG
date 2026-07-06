@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/banner.svg" alt="NinjaDBG Banner" width="800" />
+<img src="resources/ninja_logo.png" alt="NinjaDBG" width="220" height="220" />
 
 [![GitHub release](https://img.shields.io/github/v/release/ChapzoMods/NinjaDBG?color=00ffe1)](https://github.com/ChapzoMods/NinjaDBG/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-00ffe1.svg)](https://opensource.org/licenses/Apache-2.0)
