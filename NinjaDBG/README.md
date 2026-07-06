@@ -28,7 +28,7 @@ debuggers leave obvious traces (INT3 bytes in `.text`, `TracerPid` set in
 `/proc/self/status`, parent process names like `gdb`), NinjaDBG masks, redirects,
 or eliminates each signal so the target process believes it is running alone.
 
-### What changed in v1.1.2 (hotfix)
+### What changed in v1.1.3 (hotfix)
 
 - **GUI removed.** NinjaDBG is now CLI-only. The headless CLI exposes the full
   feature set. This eliminates the Cairo/Pango/X11 build dependencies and
@@ -63,13 +63,13 @@ or eliminates each signal so the target process believes it is running alone.
 | Continue / pause | Yes | `PTRACE_CONT`, `SIGSTOP` |
 | Software breakpoints (INT3) | Yes | 0xCC patching, original byte preserved |
 | Hardware breakpoints (DR0-DR3) | Yes | No `0xCC` in target `.text` |
-| Conditional breakpoints | Yes (fixed in v1.1.2) | `"rax == 0x10"` syntax; condition now actually checked |
-| Temporary breakpoints | Yes (fixed in v1.1.2) | Auto-removed after first hit |
+| Conditional breakpoints | Yes (fixed in v1.1.3) | `"rax == 0x10"` syntax; condition now actually checked |
+| Temporary breakpoints | Yes (fixed in v1.1.3) | Auto-removed after first hit |
 | Watchpoints (memory access) | Yes | DR0-DR3 with W / RW / X |
 | Read/write registers + memory | Yes | `process_vm_readv`/`writev` (stealth) |
 | Backtrace (RBP chain walk) | Yes | Symbol resolution from `/proc/<pid>/maps` |
 | Syscall stepping | Yes | `PTRACE_SYSCALL`, entry vs exit detection |
-| Full x86-64 disassembler | Yes | Standalone module; ALU size/direction fixed in v1.1.2 |
+| Full x86-64 disassembler | Yes | Standalone module; ALU size/direction fixed in v1.1.3 |
 | Interactive TUI memory editor | Yes | VT100 raw-mode; hex+ASCII, seek, search, follow-ptr |
 | Lua + Python scripting | Yes | JSON-RPC subprocess bridge; `ndbg` module properly registered |
 | Pretty printers (C/C++/Rust/Go/Python) | Yes | Language-aware string and struct printing |
@@ -84,13 +84,16 @@ or eliminates each signal so the target process believes it is running alone.
 | Userland (8 techniques) | HW breakpoints, `process_vm_readv`, mask `/proc/self/status`, hide mmaps, timing normalization, parent name masquerade, hide from ps, INT3 scan bypass | Always available; `libninjastealth.so` auto-compiled on first run |
 | Kernel (8 techniques) | Hide PID from `/proc`, mask wchan, mask syscall, mask comm, suppress SIGCHLD, force dumpable, intercept TRACEME, hide mmaps | Optional LKM (`ninja_stealth.ko`); requires root |
 
-### libninjastealth.so hooks (rewritten in v1.1.2)
+### libninjastealth.so hooks (13 hooks, v1.1.3)
 
 | Hook | What it does |
 |---|---|
 | `open` / `open64` / `openat` | Detects opens of `/proc/self/{status,wchan,syscall,stat,comm,maps}` and tags the fd |
-| `read` / `pread` / `readv` | Rewrites buffered reads from tagged fds: `TracerPid: 0`, `wchan: 0`, `syscall: running`, `stat: R`, `comm: kworker/u:1`, maps lines filtered |
+| `read` / `pread` / `pread64` / `readv` | Rewrites buffered reads from tagged fds: `TracerPid: 0`, `wchan: 0`, `syscall: running`, `stat: R`, `comm: kworker/u:1`, maps lines filtered |
 | `fopen` | Same tagging as `open` but for stdio |
+| `fgets` | Rewrites stdio line reads from tagged FILE*s |
+| `getline` | Rewrites dynamic line reads from tagged FILE*s |
+| `close` | Unregisters stealth fds (prevents fd-recycling cross-contamination) |
 | `ptrace` | `PTRACE_TRACEME` returns -1/ESRCH (hides that we are tracing) |
 | `prctl` | `PR_GET_DUMPABLE` always returns 1 |
 
@@ -101,7 +104,7 @@ All buffer rewriting uses `memmem`/`memchr` (bounded by read count) instead of
 
 ## Headless CLI
 
-The headless CLI is the only interface (GUI was removed in v1.1.2).
+The headless CLI is the only interface (GUI was removed in v1.1.3).
 
 ### Launching
 
@@ -201,7 +204,7 @@ pip3 install angr
 sudo apt-get install retdec-dev
 ```
 
-No more Cairo/Pango/X11 dependencies (GUI was removed in v1.1.2).
+No more Cairo/Pango/X11 dependencies (GUI was removed in v1.1.3).
 
 ### Compile
 
@@ -228,19 +231,33 @@ This produces `build/ninjadb` (the CLI binary) and `build/target_test` (demo tar
 
 ## Changelog
 
-### v1.1.2 (this release)
+### v1.1.3 (this release — stable)
 
-**GUI removed:**
-- Deleted `MainWindow.cpp`, `MainWindowPanels.cpp`, `MainWindow.h`, `UITheme.h`
-- Removed Cairo/Pango/X11 build dependencies from Makefile
-- `main.cpp` now defaults to CLI (no `--cli` flag needed)
-- Removed GUI references from WelcomeScreen and EULA
+**Critical breakpoint fixes:**
+- Fixed `cont()` re-trapping on breakpoint at current RIP (single-step over bp before re-installing)
+- Fixed conditional breakpoint infinite recursion when condition is false (single-step before re-arm)
+- Fixed `waitForStop()` deadlock when `cont()` fails (now checks return value before waiting)
+- Fixed `stepOut()`/`stepOver()` calling `waitForStop()` after `cont()` failure (deadlock)
 
-**libninjastealth.so rewritten:**
-- Added hooks for `open64`, `openat`, `pread`, `readv`, `fopen`, `ptrace`, `prctl`
-- Now masks 6 procfs files (was 1): status, wchan, syscall, stat, comm, maps
-- All buffer operations use `memmem`/`memchr` (was `strstr`/`strchr` — unsafe on procfs data)
-- Added null-check for `dlsym` return values
+**Batch mode fix:**
+- Fixed `-c` batch mode hanging on EULA prompt (now auto-skips EULA in batch mode)
+- Added error when `-c` is given without a command string
+
+**attach() fix:**
+- `attach()` now sets `PTRACE_O_EXITKILL` and `PTRACE_O_TRACECLONE/FORK/EXEC` (was setting no options)
+
+**Other fixes:**
+- `.deb` Depends changed from `build-essential, pkg-config` to `libc6, libstdc++6`
+- `parseAddr()` now validates input with `errno`/`endptr` (was always returning `ok=true`)
+- `ScriptEngine`: added missing `kill`, `tbreak`, `breakpoint_cond` handlers
+- `DebuggerCore`: `pid_` cleared on target exit (prevents ptrace on dead process)
+- Added `sleep <ms>` command
+- Added `finish | fo` to help text (was implemented but undocumented)
+- Added all command aliases to help text (`cont`, `stepi`, `si`, `tb`, `d`, `dis`, `dec`, `pp`, etc.)
+- Removed stale `--cli` references from docs/index.html
+- Removed stale `class MainWindow` forward declaration from WelcomeScreen.h
+- Fixed LICENSE stale v1.1.1 reference
+- Updated README hooks table to list all 13 hooks (was listing only 9)
 - Constructor initializes fd tracking table
 
 **Bug fixes (10 fixes from code review):**
@@ -319,7 +336,7 @@ NinjaDBG/
 │   └── WelcomeScreen.cpp
 └── scripts/
     ├── target_test.cpp         Demo target
-    ├── ninjastealth.c          Preload payload (rewritten in v1.1.2)
+    ├── ninjastealth.c          Preload payload (rewritten in v1.1.3)
     └── ninja_stealth_kmod.c    Generated kernel module source
 ```
 
@@ -346,7 +363,7 @@ Request. Report bugs via GitHub Issues.
 
 <div align="center">
 
-NinjaDBG v1.1.2 | Apache-2.0 | by Chapzoo
+NinjaDBG v1.1.3 | Apache-2.0 | by Chapzoo
 
 Stay stealthy.
 

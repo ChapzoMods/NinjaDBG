@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.2 - DebuggerCore implementation
+// NinjaDBG v1.1.3 - DebuggerCore implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "DebuggerCore.h"
 #include "AntiDetect.h"
@@ -46,6 +46,15 @@ bool DebuggerCore::attach(pid_t pid) {
     }
     pid_ = pid;
     state_ = RunState::Stopped;
+
+    // v1.1.3: Set the same ptrace options as attachByLaunch, so that:
+    //   - Child threads/processes are traced (TRACECLONE/FORK/EXEC)
+    //   - The tracee is killed if NinjaDBG dies (EXITKILL)
+    long opts = PTRACE_O_TRACECLONE | PTRACE_O_TRACEFORK |
+                PTRACE_O_TRACEEXEC  | PTRACE_O_TRACEEXIT |
+                PTRACE_O_EXITKILL;
+    ptrace(PTRACE_SETOPTIONS, pid_, nullptr, (void*)opts);
+
     return true;
 }
 
@@ -128,6 +137,39 @@ bool DebuggerCore::step() {
 
 bool DebuggerCore::cont() {
     if (pid_ == 0) return false;
+
+    // v1.1.3: If RIP is currently at a breakpoint address, we need to
+    // single-step over it FIRST (with the bp uninstalled) before re-installing
+    // all breakpoints and doing PTRACE_CONT. Otherwise the CPU immediately
+    // re-traps on the 0xCC we just re-installed.
+    RegisterSet r;
+    bool need_step_over = false;
+    if (readRegisters(r)) {
+        for (auto& kv : bps_) {
+            if (kv.second.enabled && kv.second.address == r.rip) {
+                need_step_over = true;
+                break;
+            }
+        }
+    }
+
+    if (need_step_over) {
+        // Single-step over the breakpoint instruction (bp is already uninstalled
+        // by waitForStop when it detected the hit)
+        if (ptrace(PTRACE_SINGLESTEP, pid_, nullptr, nullptr) == -1) {
+            last_error_ = "SINGLESTEP over bp failed";
+            return false;
+        }
+        int step_status;
+        waitpid(pid_, &step_status, 0);
+        if (WIFEXITED(step_status) || WIFSIGNALED(step_status)) {
+            state_ = RunState::Exited;
+            pid_ = 0;
+            return false;
+        }
+    }
+
+    // Now re-install all breakpoints and continue
     installAllBps();
     if (ptrace(PTRACE_CONT, pid_, nullptr, nullptr) == -1) {
         last_error_ = "PTRACE_CONT failed";
@@ -141,7 +183,7 @@ bool DebuggerCore::contUntil(addr_t addr) {
     // Set a temporary breakpoint at addr
     int id = addBreakpoint(addr, false, "_temp_contUntil");
     if (id < 0) return false;
-    cont();
+    if (!cont()) { removeBreakpoint(id); return false; }
     int sig; bool ex; int code;
     waitForStop(sig, ex, code);
     removeBreakpoint(id);
@@ -165,14 +207,14 @@ bool DebuggerCore::waitForStop(int& signal_out, bool& exited_out, int& exit_code
         exited_out = true;
         exit_code_out = WEXITSTATUS(status);
         state_ = RunState::Exited;
-        pid_ = 0;  // v1.1.2: clear pid so subsequent commands don't ptrace a dead process
+        pid_ = 0;  // v1.1.3: clear pid so subsequent commands don't ptrace a dead process
         return true;
     }
     if (WIFSIGNALED(status)) {
         exited_out = true;
         exit_code_out = -WTERMSIG(status);
         state_ = RunState::Exited;
-        pid_ = 0;  // v1.1.2: clear pid so subsequent commands don't ptrace a dead process
+        pid_ = 0;  // v1.1.3: clear pid so subsequent commands don't ptrace a dead process
         return true;
     }
     if (WIFSTOPPED(status)) {
@@ -190,18 +232,37 @@ bool DebuggerCore::waitForStop(int& signal_out, bool& exited_out, int& exit_code
                     bp->hit_count++;
                     uninstallBp(*bp);
 
-                    // v1.1.2: Check conditional breakpoint
+                    // v1.1.3: Check conditional breakpoint
                     if (!bp->condition.empty() && !checkBreakpointCondition(bp->id)) {
-                        // Condition is false — reinstall bp and continue automatically
-                        installBp(*bp);
-                        // Re-continue and wait for next stop
-                        if (ptrace(PTRACE_CONT, pid_, nullptr, nullptr) != -1) {
-                            state_ = RunState::Running;
-                            return waitForStop(signal_out, exited_out, exit_code_out);
+                        // Condition is false — single-step over the bp instruction
+                        // (bp is currently uninstalled), then re-install and continue.
+                        // This avoids the infinite re-trap loop.
+                        if (ptrace(PTRACE_SINGLESTEP, pid_, nullptr, nullptr) == -1) {
+                            // Step failed — return as stopped
+                            state_ = RunState::Stopped;
+                            return true;
                         }
+                        int step_status;
+                        waitpid(pid_, &step_status, 0);
+                        if (WIFEXITED(step_status) || WIFSIGNALED(step_status)) {
+                            exited_out = true;
+                            exit_code_out = WIFEXITED(step_status) ? WEXITSTATUS(step_status) : -WTERMSIG(step_status);
+                            state_ = RunState::Exited;
+                            pid_ = 0;
+                            return true;
+                        }
+                        // Re-install the breakpoint and continue
+                        installBp(*bp);
+                        if (ptrace(PTRACE_CONT, pid_, nullptr, nullptr) == -1) {
+                            state_ = RunState::Stopped;
+                            return true;
+                        }
+                        state_ = RunState::Running;
+                        // Recurse to wait for next stop
+                        return waitForStop(signal_out, exited_out, exit_code_out);
                     }
 
-                    // v1.1.2: Auto-remove temporary breakpoints
+                    // v1.1.3: Auto-remove temporary breakpoints
                     if (bp->temporary) {
                         bps_.erase(bp->id);
                     }
@@ -395,7 +456,7 @@ std::vector<MemoryRegion> DebuggerCore::readMaps() {
         if (n >= 5) r.path = path;
         out.push_back(r);
     }
-    maps_cache_ = out;  // v1.1.2: cache for backtrace symbol resolution
+    maps_cache_ = out;  // v1.1.3: cache for backtrace symbol resolution
     return out;
 }
 
@@ -549,7 +610,7 @@ bool DebuggerCore::pokeByte(addr_t addr, u8 v) {
     return ptrace(PTRACE_POKEDATA, pid_, (void*)addr, (void*)word) != -1;
 }
 
-// ===== v1.1.2 advanced features =====
+// ===== v1.1.3 advanced features =====
 
 int DebuggerCore::addConditionalBreakpoint(addr_t addr, const std::string& condition,
                                             const std::string& label) {
@@ -667,12 +728,12 @@ bool DebuggerCore::stepOut() {
     if (!readMemory(r.rsp, &ret_addr, 8)) return false;
     int id = addTempBreakpoint(ret_addr, "_step_out_ret");
     if (id < 0) return false;
-    bool ok = cont();
+    // v1.1.3: check cont() return value to avoid deadlock
+    if (!cont()) { removeBreakpoint(id); return false; }
     int sig; bool ex; int code;
-    if (waitForStop(sig, ex, code)) {
-        removeBreakpoint(id);
-    }
-    return ok;
+    waitForStop(sig, ex, code);
+    removeBreakpoint(id);
+    return !ex;
 }
 
 bool DebuggerCore::stepOver() {
@@ -694,12 +755,12 @@ bool DebuggerCore::stepOver() {
     }
     int id = addTempBreakpoint(r.rip + call_len, "_step_over");
     if (id < 0) return step();
-    bool ok = cont();
+    // v1.1.3: check cont() return value to avoid deadlock
+    if (!cont()) { removeBreakpoint(id); return false; }
     int sig; bool ex; int code;
-    if (waitForStop(sig, ex, code)) {
-        removeBreakpoint(id);
-    }
-    return ok;
+    waitForStop(sig, ex, code);
+    removeBreakpoint(id);
+    return !ex;
 }
 
 bool DebuggerCore::stepToSyscall(int& syscall_nr, bool& is_entry) {

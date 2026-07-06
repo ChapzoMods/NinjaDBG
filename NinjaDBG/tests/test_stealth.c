@@ -1,5 +1,5 @@
 /*
- * test_stealth.c - NinjaDBG v1.1.2 stealth baseline self-test
+ * test_stealth.c - NinjaDBG v1.1.3 stealth baseline self-test
  * Open Source (Apache-2.0) - by Chapzoo
  *
  * Standalone C program (no external libraries, no NinjaDBG headers) that

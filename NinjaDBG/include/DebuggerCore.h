@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.2 - Debugger Core (ptrace-based)
+// NinjaDBG v1.1.3 - Debugger Core (ptrace-based)
 // Open Source (Apache-2.0) - by Chapzoo
 #pragma once
 
@@ -60,7 +60,7 @@ public:
     Breakpoint* findBreakpoint(addr_t addr);
     int  findBreakpointId(addr_t addr);
 
-    // v1.1.2 — conditional breakpoints: only fire when condition evaluates true
+    // v1.1.3 — conditional breakpoints: only fire when condition evaluates true
     // Condition syntax: "rax == 0x10", "rdi != 0", "rip > 0x400000" etc.
     // Empty condition = always fire (normal breakpoint behavior)
     int  addConditionalBreakpoint(addr_t addr, const std::string& condition,
@@ -70,26 +70,26 @@ public:
     // true if the breakpoint should fire (i.e. condition is empty or true).
     bool checkBreakpointCondition(int id);
 
-    // v1.1.2 — temporary breakpoints (auto-remove after first hit)
+    // v1.1.3 — temporary breakpoints (auto-remove after first hit)
     int  addTempBreakpoint(addr_t addr, const std::string& label = "_temp");
 
-    // v1.1.2 — watchpoints (memory access breakpoints via DR0-DR3 + DR7)
+    // v1.1.3 — watchpoints (memory access breakpoints via DR0-DR3 + DR7)
     enum class WatchType { Write, ReadWrite, Execute };
     int  addWatchpoint(addr_t addr, size_t len, WatchType type, const std::string& label = "");
     bool removeWatchpoint(int id);
     std::vector<Breakpoint> watchpoints() const;
 
-    // v1.1.2 — step out: continue until current function returns
+    // v1.1.3 — step out: continue until current function returns
     // (sets a temp bp at the return address on top of stack)
     bool stepOut();
 
-    // v1.1.2 — step over: if current instruction is a CALL, set temp bp after it
+    // v1.1.3 — step over: if current instruction is a CALL, set temp bp after it
     bool stepOver();
 
-    // v1.1.2 — run until next syscall entry/exit (PTRACE_SYSCALL)
+    // v1.1.3 — run until next syscall entry/exit (PTRACE_SYSCALL)
     bool stepToSyscall(int& syscall_nr, bool& is_entry);
 
-    // v1.1.2 — backtrace (walks RBP chain, returns instruction pointers)
+    // v1.1.3 — backtrace (walks RBP chain, returns instruction pointers)
     struct Frame {
         addr_t rip;
         addr_t rbp;
@@ -98,7 +98,7 @@ public:
     };
     std::vector<Frame> backtrace(size_t max_frames = 32);
 
-    // v1.1.2 — get current syscall number (from orig_rax)
+    // v1.1.3 — get current syscall number (from orig_rax)
     long currentSyscall() const;
 
     // --- Registers ---
@@ -132,7 +132,7 @@ private:
     int         next_bp_id_ = 1;
     std::string last_error_;
     AntiDetect* anti_ = nullptr;
-    std::vector<MemoryRegion> maps_cache_;   // v1.1.2: cached for backtrace symbol resolution
+    std::vector<MemoryRegion> maps_cache_;   // v1.1.3: cached for backtrace symbol resolution
 
     bool setSwBreakpoint(addr_t addr, u8* saved);
     bool clearSwBreakpoint(addr_t addr, u8 saved);

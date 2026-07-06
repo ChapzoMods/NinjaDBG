@@ -1,8 +1,8 @@
-// NinjaDBG v1.1.2 - Basic CLI test runner
+// NinjaDBG v1.1.3 - Basic CLI test runner
 // Open Source (Apache-2.0) - by Chapzoo
 //
 // Verifies the CLI binary exists, prints help, runs in batch mode, that the
-// banner says "v1.1.2" and "Apache-2.0", and that the decomp / pretty /
+// banner says "v1.1.3" and "Apache-2.0", and that the decomp / pretty /
 // script list commands all work. The test runner does not link against the
 // NinjaDBG library -- it launches the real CLI binary as a subprocess via
 // popen() and asserts on the captured stdout.
@@ -111,7 +111,7 @@ static void test_help_flag() {
     ::snprintf(detail, sizeof(detail), "rc=%d", rc);
     check(rc == 0, "--help exits 0", detail);
     check(contains(out, "NinjaDBG"),   "--help output mentions NinjaDBG");
-    check(contains(out, "v1.1.2"),     "--help output mentions v1.1.2");
+    check(contains(out, "v1.1.3"),     "--help output mentions v1.1.3");
     check(contains(out, "Apache-2.0"), "--help output mentions Apache-2.0");
     check(contains(out, "Usage:"),     "--help output has a Usage block");
 }
@@ -124,7 +124,7 @@ static void test_batch_mode() {
     char detail[64];
     ::snprintf(detail, sizeof(detail), "rc=%d", rc);
     check(rc == 0, "batch mode (--no-eula-check -c) exits 0", detail);
-    check(contains(out, "NinjaDBG v1.1.2 CLI commands"),
+    check(contains(out, "NinjaDBG v1.1.3 CLI commands"),
           "batch 'help' prints the command list");
     check(!contains(out, "Unknown command"),
           "batch mode reports no unknown-command errors");
@@ -135,8 +135,8 @@ static void test_batch_mode() {
 static void test_banner() {
     std::string out;
     run_capture("'" + g_ninjadb_path + "' --no-eula-check -c \"quit\"", out);
-    check(contains(out, "v1.1.2"),
-          "banner contains the version string v1.1.2");
+    check(contains(out, "v1.1.3"),
+          "banner contains the version string v1.1.3");
     check(contains(out, "Apache-2.0"),
           "banner contains the Apache-2.0 license tag");
     check(contains(out, "Stealth Debugger"),
@@ -191,7 +191,7 @@ static void test_script_list() {
 
 int main(int /*argc*/, char** /*argv*/) {
     g_ninjadb_path = resolve_ninjadb();
-    ::printf("NinjaDBG v1.1.2 basic test runner\n");
+    ::printf("NinjaDBG v1.1.3 basic test runner\n");
     ::printf("Using ninjadb: %s\n\n", g_ninjadb_path.c_str());
 
     test_binary_exists();

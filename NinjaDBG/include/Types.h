@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.2 - Common Types & Constants
+// NinjaDBG v1.1.3 - Common Types & Constants
 // Open Source (Apache-2.0) - by Chapzoo
 #pragma once
 
@@ -44,10 +44,10 @@ struct Breakpoint {
     int          hit_count = 0;
     std::string  condition;
     std::string  label;
-    bool         temporary = false;        // v1.1.2: auto-remove after first hit
-    bool         is_watchpoint = false;    // v1.1.2: watchpoint flag
-    int          watch_len = 0;            // v1.1.2: watch length (1/2/4/8)
-    int          watch_type = 0;           // v1.1.2: 0=W 1=RW 2=X
+    bool         temporary = false;        // v1.1.3: auto-remove after first hit
+    bool         is_watchpoint = false;    // v1.1.3: watchpoint flag
+    int          watch_len = 0;            // v1.1.3: watch length (1/2/4/8)
+    int          watch_type = 0;           // v1.1.3: 0=W 1=RW 2=X
 };
 
 struct RegisterSet {

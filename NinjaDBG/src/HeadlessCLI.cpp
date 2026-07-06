@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.2 - HeadlessCLI implementation
+// NinjaDBG v1.1.3 - HeadlessCLI implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "HeadlessCLI.h"
 #include "WelcomeScreen.h"
@@ -36,9 +36,9 @@ void HeadlessCLI::printBanner() {
         " | |\\  | | |_| | | | (_| | | | |_| |\\___ \\ \n"
         " |_| \\_|_|\\__|_| |_|\\__,_|_|  \\___/|____) |\n"
         "\n"
-        "  v1.1.2 — Stealth Debugger  (Open Source (Apache-2.0) - by Chapzoo)\n"
+        "  v1.1.3 — Stealth Debugger  (Open Source (Apache-2.0) - by Chapzoo)\n"
         "  Headless CLI mode. Type 'help' for command list, 'quit' to exit.\n"
-        "  New in v1.1.2: decomp (native C decompilation via RetDec/angr)\n"
+        "  New in v1.1.3: decomp (native C decompilation via RetDec/angr)\n"
         "\n";
 }
 
@@ -152,6 +152,12 @@ void HeadlessCLI::execute(const std::string& line) {
         if (dbg_.stepToSyscall(nr, entry)) {
             out(std::string("Syscall ") + (entry ? "entry" : "exit") + " nr=" + std::to_string(nr));
         } else err("syscall-step failed");
+    }
+    else if (cmd == "sleep") {
+        if (args.empty()) { err("usage: sleep <milliseconds>"); return; }
+        int ms = atoi(args[0].c_str());
+        if (ms <= 0) { err("sleep: invalid duration"); return; }
+        usleep(ms * 1000);
     }
     else {
         err("Unknown command: " + cmd + " (type 'help')");
@@ -988,36 +994,39 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>& args) {
         return;
     }
 
-    out("NinjaDBG v1.1.2 CLI commands:\n"
+    out("NinjaDBG v1.1.3 CLI commands:\n"
         "  attach <pid>                  Attach to a running process\n"
         "  launch <bin> [args...]        Launch a new process under the debugger\n"
         "  detach                        Detach from the target\n"
         "  kill                          Kill the target process\n"
-        "  continue | c                  Continue execution\n"
-        "  step | s                      Single-step one instruction\n"
+        "  continue | cont | c           Continue execution\n"
+        "  step | stepi | si | s         Single-step one instruction\n"
         "  next | n                      Step over (skip CALL)\n"
+        "  finish | fo                   Step out of current function\n"
         "  syscall-step                  Run until next syscall entry/exit\n"
-        "  break <addr> [cond]           Set a breakpoint (optionally conditional)\n"
-        "  tbreak <addr>                 Set a temporary breakpoint\n"
+        "  sleep <ms>                    Sleep for N milliseconds\n"
+        "  break | b <addr> [cond]       Set a breakpoint (optionally conditional)\n"
+        "  tbreak | tb <addr>            Set a temporary breakpoint\n"
         "  watch <addr> [len] [w|rw|x]   Set a watchpoint\n"
-        "  delete <id>                   Delete a breakpoint/watchpoint\n"
-        "  info <b|r|t|m|target>         Show breakpoints/registers/threads/maps/target\n"
+        "  delete | d <id>               Delete a breakpoint/watchpoint\n"
+        "  info | i <b|r|t|m|target>     Show breakpoints/registers/threads/maps/target\n"
         "  x /Nxb <addr>                 Examine N bytes in hex\n"
         "  x /Nxw <addr>                 Examine N words\n"
         "  set <addr> = <byte>...        Write bytes to memory\n"
-        "  disas [addr] [count]          Full x86-64 disassembly\n"
+        "  disas | dis [addr] [count]    Full x86-64 disassembly\n"
         "  edit [addr]                   Interactive TUI memory editor\n"
-        "  decomp [addr] [max_bytes]     Native C decompilation via RetDec/angr\n"
+        "  decomp | dec [addr] [max]     Native C decompilation via RetDec/angr\n"
         "  decomp file <bin> [addr]      Decompile whole file or one function\n"
         "  decomp <list|api|set>         Decompiler backend management\n"
-        "  pretty set <lang>             [v1.1.2] Set pretty printer language (c|cpp|rust|go|python)\n"
-        "  pretty cstring <addr>         [v1.1.2] Print C string at addr\n"
-        "  pretty cpp_string <addr>      [v1.1.2] Print std::string at addr\n"
-        "  pretty rust_string <addr>     [v1.1.2] Print Rust String at addr\n"
-        "  pretty go_string <addr>       [v1.1.2] Print Go string at addr\n"
-        "  pretty py_string <addr>       [v1.1.2] Print CPython str at addr\n"
-        "  pretty struct <addr> <desc>   [v1.1.2] Parse struct (e.g. i32,str,ptr)\n"
-        "  pretty <list|api>             [v1.1.2] Show printers / API docs\n"
+        "  pretty | pp set <lang>        Set pretty printer language (c|cpp|rust|go|python)\n"
+        "  pretty cstring <addr>         Print C string at addr\n"
+        "  pretty cpp_string <addr>      Print std::string at addr\n"
+        "  pretty rust_string <addr>     Print Rust String at addr\n"
+        "  pretty go_string <addr>       Print Go string at addr\n"
+        "  pretty py_string <addr>       Print CPython str at addr\n"
+        "  pretty struct <addr> <desc>   Parse struct (e.g. i32,str,ptr)\n"
+        "  pretty auto <addr>            Auto-print using active language\n"
+        "  pretty <list|api>             Show printers / API docs\n"
         "  bt | backtrace                Show call stack\n"
         "  target <binary>               Load a binary for static patching\n"
         "  patch list                    List applied patches\n"
@@ -1025,6 +1034,7 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>& args) {
         "  patch apply <off> <kind> [b]  Apply a patch (nop/jmp/nojmp/callnop/rettrue/ascii)\n"
         "  patch save <outfile>          Save patched binary\n"
         "  patch undo [id]               Undo a patch (default: last)\n"
+        "  patch info                    Show target binary info\n"
         "  stealth list                  List anti-detect techniques\n"
         "  stealth on|off <name>         Enable/disable a technique\n"
         "  kernel status                 Show kernel module status\n"
@@ -1034,8 +1044,8 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>& args) {
         "  script api                    Print Lua/Python API docs\n"
         "  script run lua <file|code>    Run a Lua script\n"
         "  script run python <file|code> Run a Python script\n"
-        "  help                          Show this help\n"
-        "  quit | q                      Exit NinjaDBG");
+        "  help [cmd]                    Show help (optionally for a specific command)\n"
+        "  quit | q | exit               Exit NinjaDBG");
 }
 
 void HeadlessCLI::cmdQuit(const std::vector<std::string>&) {
@@ -1168,6 +1178,28 @@ void HeadlessCLI::printTargetInfo() {
 
 int HeadlessCLI::run(int argc, char** argv, bool skip_eula) {
     printBanner();
+
+    // v1.1.3: Parse -c BEFORE showEula() so batch mode auto-skips the EULA prompt.
+    // Previously, batch mode would block on stdin waiting for EULA acceptance,
+    // which users perceived as "attach hangs in batch mode".
+    bool batch_mode = false;
+    std::string batch_cmds;
+    for (int i = 1; i < argc; i++) {
+        std::string a = argv[i];
+        if (a == "-c" || a == "--commands") {
+            batch_mode = true;
+            if (i + 1 < argc) {
+                batch_cmds = argv[++i];
+            } else {
+                err("error: -c requires a command string");
+                return 1;
+            }
+        }
+    }
+
+    // In batch mode, auto-skip EULA (the user is scripting, not interacting)
+    if (batch_mode) skip_eula = true;
+
     if (skip_eula) {
         eula_accepted_ = true;
     } else {
@@ -1176,25 +1208,6 @@ int HeadlessCLI::run(int argc, char** argv, bool skip_eula) {
             return 1;
         }
         eula_accepted_ = true;
-    }
-
-    // Parse CLI args: --cli mode just enters REPL
-    bool batch_mode = false;
-    std::string batch_cmds;
-    for (int i = 1; i < argc; i++) {
-        std::string a = argv[i];
-        if (a == "-c" || a == "--commands") {
-            batch_mode = true;
-            if (i + 1 < argc) batch_cmds = argv[++i];
-        } else if (a == "--no-eula-check") {
-            // Already handled by skip_eula; ignore here
-        } else if (a == "--help" || a == "-h") {
-            std::cout << "Usage: ninjadb --cli [-c \"commands\"] [--no-eula-check]\n"
-                      << "  --cli              Run in headless CLI mode\n"
-                      << "  -c \"commands\"      Execute commands and exit (separated by ;)\n"
-                      << "  --no-eula-check    Skip EULA acceptance prompt\n";
-            return 0;
-        }
     }
 
     if (batch_mode) {

@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.2 - Script Engine (Lua + Python)
+// NinjaDBG v1.1.3 - Script Engine (Lua + Python)
 // Open Source (Apache-2.0) - by Chapzoo
 //
 // Allows users to script NinjaDBG via either Lua or Python. The engine
