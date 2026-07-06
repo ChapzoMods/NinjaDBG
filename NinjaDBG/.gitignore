@@ -17,12 +17,8 @@ Thumbs.db
 # Temp files
 *.tmp
 *.bak
-/tmp/
 
-# Secrets - never commit tokens
-*.token
+# Secrets - never commit tokens or .env
 .env
-build/obj/
-build/ninjadb
-build/target_test
-build/screenshot
+*.token
+*.key
