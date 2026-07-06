@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.3 - Kernel-Level Stealth Techniques
+// NinjaDBG v1.0.4 - Kernel-Level Stealth Techniques
 // Closed Source - Free - by Chapzoo
 //
 // Userland anti-detect can mask /proc/self/status, rewrite argv[0], and use

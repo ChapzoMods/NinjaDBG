@@ -6,7 +6,7 @@
 
 ### Stealth-Aware Native Debugger for Linux x86-64<br/>with experimental Windows & macOS support
 
-**Version 1.0.3** · Closed Source · Free · Created by **Chapzoo**
+**Version 1.0.4** · Closed Source · Free · Created by **Chapzoo**
 
 [Features](#-features) · [Headless CLI](#-headless-cli) · [Kernel Stealth](#-kernel-level-stealth) · [Binary Patching](#-binary-patching) · [Cross-Platform](#-cross-platform-debugging) · [License](#-license)
 
@@ -39,12 +39,14 @@ It is purpose-built for analysts working against:
 - **Anti-cheat agents** that enumerate `/proc/<pid>/maps` looking for injected
   preload libraries, or that check parent process names against a denylist
 
-NinjaDBG v1.0.3 adds: a full-featured **headless CLI**, **kernel-level stealth**
+NinjaDBG v1.0.4 adds: a full-featured **headless CLI**, **kernel-level stealth**
 (via a loadable kernel module), a **binary patcher** for in-place static
 patches without attaching, **conditional + temporary breakpoints**, hardware
 **watchpoints**, real **step-over** and **step-out**, **syscall-entry
 stepping**, **cross-platform debugging** for Windows PE and macOS Mach-O
-binaries, and a **welcome screen + EULA** flow.
+binaries, a **welcome screen + EULA** flow, a **full standalone x86-64
+disassembler** in the CLI, an **interactive TUI memory editor** (hex+ASCII,
+no ncurses), and **Lua + Python scripting** via a JSON-RPC subprocess bridge.
 
 ---
 
@@ -74,6 +76,9 @@ binaries, and a **welcome screen + EULA** flow.
 | Auto-detach on parent exit | ✅ | `PTRACE_O_EXITKILL` |
 | **Backtrace** (RBP chain walk) | ✅ **NEW v1.0.3** | Symbol resolution from `/proc/<pid>/maps` |
 | **Syscall stepping** | ✅ **NEW v1.0.3** | `PTRACE_SYSCALL`, distinguishes entry vs exit |
+| **Full x86-64 disassembler (CLI)** | ✅ **NEW v1.0.4** | Standalone `Disassembler` module; covers GPR/SIMD/branch/system opcodes |
+| **Interactive TUI memory editor** | ✅ **NEW v1.0.4** | VT100 raw-mode editor; hex+ASCII, seek, search, follow-ptr, edit inline |
+| **Lua + Python scripting** | ✅ **NEW v1.0.4** | `script run lua/python <file>`; JSON-RPC subprocess bridge; full API |
 
 ### Stealth subsystem
 
@@ -208,6 +213,8 @@ ninjadb --cli --no-eula-check
 | `x /Nxb <addr>` | Examine N bytes in hex |
 | `x /Nxw <addr>` | Examine N words |
 | `set <addr> = <byte>...` | Write bytes to memory |
+| `disas [addr] [count]` | **[v1.0.4]** Full x86-64 disassembly (defaults to current RIP) |
+| `edit [addr]` | **[v1.0.4]** Launch interactive TUI memory editor |
 | `bt` / `backtrace` | Show call stack |
 | `target <binary>` | Load a binary for static patching |
 | `patch list` | List applied patches |
@@ -220,6 +227,10 @@ ninjadb --cli --no-eula-check
 | `kernel status` | Show kernel module status |
 | `kernel load` | Build + load the stealth LKM (requires root) |
 | `kernel unload` | Unload the LKM |
+| `script list` | **[v1.0.4]** Show scripting backend availability (Lua/Python) |
+| `script api` | **[v1.0.4]** Print the Lua/Python API documentation |
+| `script run lua <file\|code>` | **[v1.0.4]** Run a Lua script (file or inline code) |
+| `script run python <file\|code>` | **[v1.0.4]** Run a Python script (file or inline code) |
 | `help` / `quit` | Help / exit |
 
 ---
@@ -348,6 +359,236 @@ NinjaDBG can be built natively to use `mach exception ports` directly
 
 ---
 
+## 🔬 Disassembler (NEW v1.0.4)
+
+NinjaDBG v1.0.4 ships a from-scratch x86-64 disassembler as a standalone
+module (`Disassembler.h` / `Disassembler.cpp`). It is **dramatically more
+complete** than the inline decoder used by the GUI in earlier versions.
+
+### Coverage
+
+| Category | Examples |
+|----------|----------|
+| General-purpose | `mov`, `add`, `sub`, `and`, `or`, `xor`, `cmp`, `test`, `lea`, `xchg`, `push`, `pop`, `inc`, `dec`, `neg`, `not`, `mul`, `imul`, `div`, `idiv` |
+| Shifts/rotates | `rol`, `ror`, `rcl`, `rcr`, `shl`, `shr`, `sar` |
+| Branches | `jmp` rel8/rel32, `Jcc` rel8/rel32 (16 conditions), `call` rel32, `call r/m`, `ret`, `loop`, `loope`, `loopne`, `jrcxz` |
+| Conditional moves | `CMOVcc` (16 conditions) |
+| Setcc | `SETcc r/m8` (16 conditions) |
+| Bit ops | `bt`, `bts`, `btr`, `btc`, `bsf`, `bsr`, `cmpxchg`, `xadd` |
+| Moves with extension | `movzx` (r/m8, r/m16), `movsx` (r/m8, r/m16) |
+| System | `syscall`, `sysret`, `sysenter`, `sysexit`, `int`, `iret`, `cpuid`, `rdtsc`, `rdmsr`, `hlt`, `cli`, `sti`, `clt`, `std` |
+| Stack | `push`/`pop` (reg + imm + r/m), `leave`, `enter`, `pushf`, `popf` |
+| String ops | `movsb/w/d/q`, `cmpsb/w/d/q`, `stosb/w/d/q`, `lodsb/w/d/q`, `scasb/w/d/q`, `rep`/`repe`/`repne` prefixes |
+| I/O | `in`/`out` (imm + dx) |
+| NOP variants | `nop`, multi-byte `0F 1F` NOPs, `prefetch` |
+| Group ops | Group 1 (`add`/`or`/.../`cmp` r/m, imm), Group 2 (shifts), Group 3 (`test`/`not`/`neg`/`mul`/`div`), Group 5 (`inc`/`dec`/`call`/`jmp`/`push` r/m), Group 8 (`bt`/`bts`/`btr`/`btc`) |
+| SIMD (partial) | `movups`/`movupd`/`movss` |
+| Prefixes | Legacy (`0x66`/`0x67`/`0xF0`/`0xF2`/`0xF3`/seg overrides), `REX` (W/R/X/B), 2-byte + 3-byte opcodes (`0F xx`, `0F 38 xx`, `0F 3A xx`) |
+| Addressing | ModR/M + SIB + disp8/disp32, RIP-relative addressing |
+
+### Usage
+
+```bash
+(ninjadb) attach 12345
+(ninjadb) disas                    # disassemble 20 instructions at RIP
+(ninjadb) disas 0x401000 50        # disassemble 50 instructions at 0x401000
+```
+
+Output format (with annotation of branch targets):
+
+```
+ADDRESS             BYTES               MNEMONIC OPERANDS
+------------------- ------------------- ------------------------------
+>> 0x00007eff2b8c9687  5b                 pop rbx
+   0x00007eff2b8c9688  c3                 ret
+   0x00007eff2b8c9689  0f 1f 80 00 00 00 00  nop
+   0x00007eff2b8c9690  83 e2 39           and edx, 0x39
+   0x00007eff2b8c9693  83 fa 08           cmp edx, 0x8
+   0x00007eff2b8c9696  75 de              jne 0x7eff2b8c9676  ; <libc.so.6+0x67676>
+   0x00007eff2b8c9698  e8 23 ff ff ff     call 0x7eff2b8c95c0  ; <libc.so.6+0x675C0>
+```
+
+The `>>` marker highlights the current `RIP`. Branch targets are annotated
+with the resolved symbol (basename of the containing mapping + offset).
+
+---
+
+## ✏️ Interactive Memory Editor (NEW v1.0.4)
+
+A full-screen TUI memory editor, accessible from the CLI as `edit [addr]`.
+Built with raw VT100 escape sequences — **no ncurses dependency** — so it
+builds everywhere.
+
+### Features
+
+- **Two modes**: Hex (default) and Disassembly — toggle with `m`
+- **Hex + ASCII side-by-side** with cursor highlighting (nibble-level in hex)
+- **Inline byte editing**: press `e`, type 2 hex digits, Enter to commit
+- **Seek to address**: press `s`, type address, Enter
+- **Byte pattern search**: press `/`, type hex bytes (`90 90 90`), Enter;
+  cycle hits with `n` (next) and `N` (previous)
+- **Follow pointer**: press `f` to read 8 bytes at cursor as a u64 pointer
+  and seek to it
+- **Adjustable row size**: cycle 8/16/32 bytes per row with `w`
+- **Navigation**: Arrow keys, Page Up/Down, Home/End
+- **Status bar** at bottom showing current mode, base addr, cursor addr
+
+### Key bindings
+
+| Key | Action |
+|-----|--------|
+| `↑ ↓ ← →` | Move cursor |
+| `Page Up` / `Page Down` | Scroll one page |
+| `Home` / `End` | Jump to top / bottom of view |
+| `e` | Edit byte at cursor (type 2 hex digits) |
+| `s` | Seek to new address |
+| `/` | Search for byte pattern |
+| `n` / `N` | Next / previous search hit |
+| `f` | Follow pointer at cursor (read 8 bytes as u64) |
+| `m` | Toggle Hex / Disassembly mode |
+| `w` | Cycle row size (8 → 16 → 32) |
+| `q` | Quit editor |
+| `h` | Show help |
+
+### Usage
+
+```bash
+(ninjadb) attach 12345
+(ninjadb) edit                # open editor at current RIP
+(ninjadb) edit 0x7ffe12340000 # open editor at specific address
+```
+
+---
+
+## 🐍 Scripting — Lua + Python (NEW v1.0.4)
+
+NinjaDBG v1.0.4 exposes a scriptable API to **both Lua and Python** via a
+JSON-RPC subprocess bridge. The script runs in a child process
+(`lua` / `python3`) and communicates with NinjaDBG over stdin/stdout.
+
+### Availability
+
+| Backend | Required binary | Install |
+|---------|-----------------|---------|
+| Lua | `lua` / `lua5.4` / `lua5.3` / `lua5.1` | `sudo apt-get install lua5.4` |
+| Python | `python3` / `python` | `sudo apt-get install python3` |
+
+Check availability with `script list`.
+
+### API
+
+Both backends expose the same `ndbg` module with these functions:
+
+```python
+# Process control
+ndbg.attach(pid)
+ndbg.launch(path, [args])
+ndbg.detach()
+ndbg.kill()
+ndbg.continue_()           # 'continue' is a Python keyword
+ndbg.step()
+ndbg.wait_stop()           # returns {signal, exited, exit_code}
+
+# Breakpoints
+ndbg.breakpoint(addr)
+ndbg.tbreak(addr)          # temporary
+ndbg.breakpoint_cond(addr, cond)
+ndbg.delete(id)
+
+# Memory
+ndbg.read_bytes(addr, n)   # returns list of 0-255 ints
+ndbg.write_bytes(addr, bytes_)
+ndbg.read_register(name)   # "rax", "rip", etc.
+ndbg.write_register(name, value)
+
+# Disassembly + backtrace
+ndbg.disassemble(addr, n)  # returns list of formatted strings
+ndbg.backtrace([max_frames=32])
+
+# Info
+ndbg.info_registers()      # returns dict {name -> value}
+ndbg.info_breakpoints()    # returns list of dicts
+
+# Misc
+ndbg.log(msg)
+ndbg.sleep(ms)
+```
+
+### Example (Python)
+
+```python
+# dump_regs.py — attach, read registers, disassemble at RIP, walk stack
+pid = int(__import__('sys').argv[1]) if len(__import__('sys').argv) > 1 else 0
+if pid:
+    ndbg.attach(pid)
+
+regs = ndbg.info_registers()
+rip = regs['rip']
+rsp = regs['rsp']
+ndbg.log(f'RIP = 0x{rip:x}')
+ndbg.log(f'RSP = 0x{rsp:x}')
+
+instrs = ndbg.disassemble(rip, 10)
+ndbg.log(f'Disassembled {len(instrs)} instructions at RIP:')
+for i, ins in enumerate(instrs):
+    ndbg.log(f'  [{i}] {ins}')
+
+frames = ndbg.backtrace(8)
+ndbg.log(f'Backtrace ({len(frames)} frames):')
+for i, f in enumerate(frames):
+    ndbg.log(f'  #{i} 0x{f["rip"]:x}  {f.get("symbol", "?")}')
+
+ndbg.detach()
+```
+
+Run it:
+
+```bash
+(ninjadb) script run python /path/to/dump_regs.py
+```
+
+### Example (Lua)
+
+```lua
+-- dump_regs.lua
+local pid = tonumber(arg[1])
+ndbg.attach(pid)
+
+local rip = ndbg.read_register("rip")
+ndbg.log(string.format("RIP = 0x%x", rip))
+
+local bytes = ndbg.read_bytes(rip, 16)
+for i, b in ipairs(bytes) do
+    ndbg.log(string.format("  [%d] = 0x%02x", i, b))
+end
+
+ndbg.detach()
+```
+
+Run it:
+
+```bash
+(ninjadb) script run lua /path/to/dump_regs.lua
+```
+
+### How it works
+
+1. NinjaDBG spawns `lua -e <bootstrap+code>` or `python3 -c <bootstrap+code>`
+   as a subprocess.
+2. The bootstrap exposes the `ndbg` module: each call sends a JSON request
+   on stdout and reads a JSON response from stdin.
+3. NinjaDBG's parent loop reads each request, dispatches to the appropriate
+   `DebuggerCore` method, and writes the JSON response back.
+4. When the script exits, the subprocess terminates and control returns to
+   the CLI.
+
+This design means:
+- **No library dependency** — NinjaDBG doesn't link liblua or libpython.
+- **Isolation** — a crashing script doesn't crash NinjaDBG.
+- **Same API for both languages** — switch backends without rewriting logic.
+
+---
+
 ## 🏗️ Architecture
 
 ```
@@ -367,6 +608,9 @@ NinjaDBG/
 │   ├── PlatformAdapters.h         Cross-platform adapters     [NEW v1.0.3]
 │   ├── HeadlessCLI.h              Headless CLI REPL           [NEW v1.0.3]
 │   ├── WelcomeScreen.h            Welcome + EULA flow         [NEW v1.0.3]
+│   ├── Disassembler.h             Standalone x86-64 decoder   [NEW v1.0.4]
+│   ├── InteractiveMemoryEditor.h  TUI memory editor           [NEW v1.0.4]
+│   ├── ScriptEngine.h             Lua + Python scripting      [NEW v1.0.4]
 │   ├── UITheme.h                  Colors, fonts, layout constants
 │   └── MainWindow.h               X11+Cairo main window controller
 ├── src/
@@ -378,6 +622,9 @@ NinjaDBG/
 │   ├── PlatformAdapters.cpp       Linux / Windows / macOS adapters (RSP)
 │   ├── HeadlessCLI.cpp            REPL + batch mode + all command handlers
 │   ├── WelcomeScreen.cpp          Welcome message + EULA text + persistence
+│   ├── Disassembler.cpp           Standalone x86-64 decoder               [NEW v1.0.4]
+│   ├── InteractiveMemoryEditor.cpp TUI memory editor (VT100 raw mode)     [NEW v1.0.4]
+│   ├── ScriptEngine.cpp           Lua + Python JSON-RPC subprocess bridge [NEW v1.0.4]
 │   ├── MainWindow.cpp             X11 event loop, actions, toolbar, logo render
 │   └── MainWindowPanels.cpp       Panel painting (disasm, mem, regs, modals, …)
 ├── scripts/
@@ -447,11 +694,12 @@ This produces:
 
 | Artifact | Path | Size (approx) |
 |----------|------|----------------|
-| Debugger binary (GUI + CLI) | `build/ninjadb` | 380 KB |
+| Debugger binary (GUI + CLI + script engine) | `build/ninjadb` | 600 KB |
 | Demo target | `build/target_test` | 17 KB |
 | Preload payload | `build/libninjastealth.so` | 15 KB |
 | Screenshot helper | `build/screenshot` | 23 KB |
 | Kernel module (optional) | `build/ninja_stealth.ko` | built on demand |
+| Test scripts | `scripts/test_script.py`, `scripts/debug_disas.py` | bundled |
 
 ---
 
@@ -480,6 +728,23 @@ This produces:
 ```bash
 Xvfb :99 -screen 0 1920x1200x24 -ac +extension RANDR -noreset &
 DISPLAY=:99 ./build/ninjadb
+```
+
+---
+
+## 🖼️ Screenshots
+
+| Screenshot | Description |
+|------------|-------------|
+| `download/ninjadb_v1.0.3.png` | GUI attached to a live process (v1.0.3) |
+| `download/ninjadb_about_v1.0.2.png` | About modal with the redesigned logo (v1.0.2) |
+| `download/ninjadb_cli_v1.0.4.png` | **[NEW]** Headless CLI: disas + info registers + Python script output |
+
+To regenerate screenshots:
+
+```bash
+make screenshot            # GUI screenshot under Xvfb
+python3 scripts/render_cli_screenshot.py   # CLI screenshot from captured output
 ```
 
 ---
@@ -514,9 +779,9 @@ launch (also reproduced in `WelcomeScreen.cpp`). Acceptance is persisted to
 | 1.0.0 | Initial ptrace core + UI | ✅ Released |
 | 1.0.1 | AntiDetect module + preload payload | ✅ Released |
 | 1.0.2 | UI polish: SVG icons, modal fixes, logo redesign, README rewrite | ✅ Released |
-| **1.0.3** | **Headless CLI, kernel stealth, binary patching, cross-platform, conditional bps, watchpoints, step-over/out, EULA** | ✅ **Released (this)** |
-| 1.0.4 | CLI-side disassembly, in-CLI memory editing, scripting via Lua | 🔜 Planned |
-| 1.1.0 | Conditional breakpoints GUI, watchpoints GUI, in-GUI memory editing | 🔜 Planned |
+| 1.0.3 | Headless CLI, kernel stealth, binary patching, cross-platform, conditional bps, watchpoints, step-over/out, EULA | ✅ Released |
+| **1.0.4** | **Full x86-64 disassembler (CLI), interactive TUI memory editor, Lua + Python scripting** | ✅ **Released (this)** |
+| 1.1.0 | Conditional breakpoints GUI, watchpoints GUI, in-GUI memory editing, GUI disassembler upgrade | 🔜 Planned |
 | 1.2.0 | Capstone integration for full x86-64 / ARM64 disassembly | 🔜 Planned |
 | 1.3.0 | Remote debugging over TCP (gdbserver-style) | 🔜 Planned |
 | 1.4.0 | Multi-process debugging with tabbed UI | 🔜 Planned |
@@ -538,7 +803,7 @@ are not, since the source is closed.
 
 <div align="center">
 
-**NinjaDBG v1.0.3** · Closed Source · Free · by **Chapzoo**
+**NinjaDBG v1.0.4** · Closed Source · Free · by **Chapzoo**
 
 *Stay stealthy.* 🥷
 

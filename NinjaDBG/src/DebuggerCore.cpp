@@ -356,7 +356,7 @@ std::vector<MemoryRegion> DebuggerCore::readMaps() {
         if (n >= 5) r.path = path;
         out.push_back(r);
     }
-    maps_cache_ = out;  // v1.0.3: cache for backtrace symbol resolution
+    maps_cache_ = out;  // v1.0.4: cache for backtrace symbol resolution
     return out;
 }
 
@@ -509,7 +509,7 @@ bool DebuggerCore::pokeByte(addr_t addr, u8 v) {
     return ptrace(PTRACE_POKEDATA, pid_, (void*)addr, (void*)word) != -1;
 }
 
-// ===== v1.0.3 advanced features =====
+// ===== v1.0.4 advanced features =====
 
 int DebuggerCore::addConditionalBreakpoint(addr_t addr, const std::string& condition,
                                             const std::string& label) {

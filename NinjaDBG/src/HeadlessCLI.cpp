@@ -1,8 +1,10 @@
-// NinjaDBG v1.0.3 - HeadlessCLI implementation
+// NinjaDBG v1.0.4 - HeadlessCLI implementation
 // Closed Source - Free - by Chapzoo
 #include "HeadlessCLI.h"
 #include "WelcomeScreen.h"
+#include "InteractiveMemoryEditor.h"
 #include <iostream>
+#include <fstream>
 #include <sstream>
 #include <cstring>
 #include <cstdlib>
@@ -17,6 +19,7 @@ HeadlessCLI::HeadlessCLI() {
     anti_.enable(AntiDetect::Technique::ProcVmRW);
     anti_.enable(AntiDetect::Technique::MaskTracerPid);
     anti_.enable(AntiDetect::Technique::Int3ScanBypass);
+    script_ = std::make_unique<ScriptEngine>(dbg_);
 }
 HeadlessCLI::~HeadlessCLI() {}
 
@@ -32,8 +35,9 @@ void HeadlessCLI::printBanner() {
         " | |\\  | | |_| | | | (_| | | | |_| |\\___ \\ \n"
         " |_| \\_|_|\\__|_| |_|\\__,_|_|  \\___/|____) |\n"
         "\n"
-        "  v1.0.3 — Stealth Debugger  (Closed Source - Free - by Chapzoo)\n"
+        "  v1.0.4 — Stealth Debugger  (Closed Source - Free - by Chapzoo)\n"
         "  Headless CLI mode. Type 'help' for command list, 'quit' to exit.\n"
+        "  New in v1.0.4: disas (full x86-64), edit (TUI), script (Lua/Python)\n"
         "\n";
 }
 
@@ -126,6 +130,8 @@ void HeadlessCLI::execute(const std::string& line) {
     else if (cmd == "x") cmdExamine(args);
     else if (cmd == "set") cmdSet(args);
     else if (cmd == "disas" || cmd == "dis") cmdDisas(args);
+    else if (cmd == "edit")   cmdEdit(args);
+    else if (cmd == "script") cmdScript(args);
     else if (cmd == "backtrace" || cmd == "bt") cmdBacktrace(args);
     else if (cmd == "patch") cmdPatch(args);
     else if (cmd == "stealth") cmdStealth(args);
@@ -294,8 +300,139 @@ void HeadlessCLI::cmdSet(const std::vector<std::string>& args) {
 }
 
 void HeadlessCLI::cmdDisas(const std::vector<std::string>& args) {
-    err("disas: please use the GUI for now (CLI disassembly is planned for v1.0.4)");
-    (void)args;
+    if (dbg_.pid() == 0) { err("Not attached. Use 'attach <pid>' first."); return; }
+    addr_t addr = 0;
+    size_t count = 20;
+    // If no args, default to current RIP
+    if (args.empty()) {
+        RegisterSet r;
+        if (!dbg_.readRegisters(r)) { err("readRegisters failed"); return; }
+        addr = r.rip;
+    } else {
+        bool ok; addr = parseAddr(args[0], &ok);
+        if (!ok) { err("bad address"); return; }
+        if (args.size() > 1) count = (size_t)strtoul(args[1].c_str(), nullptr, 0);
+    }
+    // Read enough bytes
+    auto bytes = dbg_.readMemoryVec(addr, count * 15 + 32);
+    if (bytes.empty()) { err("readMemory failed at " + hex(addr)); return; }
+    auto instrs = disas_.disassemble(addr, bytes.data(), bytes.size(), count);
+    if (instrs.empty()) { err("no instructions decoded"); return; }
+    // Header
+    std::cout << "ADDRESS             BYTES               MNEMONIC OPERANDS\n";
+    std::cout << "------------------- ------------------- ------------------------------\n";
+    RegisterSet regs;
+    bool have_regs = dbg_.readRegisters(regs);
+    for (auto& ins : instrs) {
+        bool at_rip = have_regs && (ins.address == regs.rip);
+        std::string line = Disassembler::format(ins, true);
+        // Annotate with symbol if it's a call/jmp
+        if (ins.has_branch_target && ins.branch_target != 0) {
+            std::string sym = resolveSymbol(ins.branch_target);
+            if (!sym.empty()) {
+                line += "  ; " + sym;
+            }
+        }
+        if (at_rip) {
+            std::cout << "\x1b[33m>> " << line << "\x1b[0m\n";  // yellow highlight
+        } else {
+            std::cout << "   " << line << "\n";
+        }
+    }
+}
+
+void HeadlessCLI::cmdEdit(const std::vector<std::string>& args) {
+    if (dbg_.pid() == 0) { err("Not attached. Use 'attach <pid>' first."); return; }
+    addr_t addr = 0;
+    if (args.empty()) {
+        RegisterSet r;
+        if (!dbg_.readRegisters(r)) { err("readRegisters failed"); return; }
+        addr = r.rip;
+    } else {
+        bool ok; addr = parseAddr(args[0], &ok);
+        if (!ok) { err("bad address"); return; }
+    }
+    out("Launching interactive memory editor at " + hex(addr) + "  (press 'q' to exit, 'h' for help)");
+    // Create the editor and run it
+    editor_ = std::make_unique<InteractiveMemoryEditor>(dbg_);
+    editor_->run(addr, InteractiveMemoryEditor::Mode::Hex);
+    editor_.reset();
+    out("Returned from editor.");
+}
+
+void HeadlessCLI::cmdScript(const std::vector<std::string>& args) {
+    if (args.empty()) { printScriptStatus(); return; }
+    std::string sub = args[0];
+    if (sub == "list") {
+        printScriptStatus();
+    } else if (sub == "api") {
+        std::cout << ScriptEngine::apiDocs() << std::endl;
+    } else if (sub == "run") {
+        if (args.size() < 3) {
+            err("usage: script run <lua|python> <file-or-code>");
+            err("  If the third arg starts with a path separator or ./, treat");
+            err("  as a file. Otherwise treat as inline code.");
+            return;
+        }
+        std::string lang_str = args[1];
+        std::string payload = args[2];
+        ScriptEngine::Lang lang;
+        if (lang_str == "lua" || lang_str == "Lua") lang = ScriptEngine::Lang::Lua;
+        else if (lang_str == "python" || lang_str == "py" || lang_str == "Python") lang = ScriptEngine::Lang::Python;
+        else { err("Unknown language: " + lang_str + " (use 'lua' or 'python')"); return; }
+
+        if (!script_->isAvailable(lang)) {
+            err(script_->installHint(lang));
+            return;
+        }
+
+        // If payload looks like a file path that exists, read it; else treat as code
+        std::string code;
+        std::ifstream f(payload);
+        if (f) {
+            std::stringstream ss; ss << f.rdbuf();
+            code = ss.str();
+            out("Running " + lang_str + " script: " + payload);
+        } else {
+            code = payload;
+            out("Running inline " + lang_str + " code");
+        }
+
+        std::string err_str;
+        if (script_->runString(lang, code, err_str)) {
+            out("Script completed.");
+        } else {
+            err("Script error: " + err_str);
+        }
+    } else {
+        err("usage: script <list|run|api>");
+    }
+}
+
+std::string HeadlessCLI::resolveSymbol(addr_t a) {
+    auto maps = dbg_.readMaps();
+    for (auto& m : maps) {
+        if (a >= m.start && a < m.end) {
+            size_t slash = m.path.rfind('/');
+            std::string bn = (slash != std::string::npos) ? m.path.substr(slash + 1) : m.path;
+            return "<" + bn + "+0x" + hex2(a - m.start, 0) + ">";
+        }
+    }
+    return "";
+}
+
+void HeadlessCLI::printScriptStatus() {
+    out("Scripting backends:");
+    out(std::string("  Lua:    ") + (script_->isAvailable(ScriptEngine::Lang::Lua) ? "[AVAILABLE]" : "[NOT INSTALLED]"));
+    out(std::string("  Python: ") + (script_->isAvailable(ScriptEngine::Lang::Python) ? "[AVAILABLE]" : "[NOT INSTALLED]"));
+    out("");
+    out("Available commands:");
+    out("  script list                Show this status");
+    out("  script api                 Print API documentation");
+    out("  script run lua <file>      Run a Lua script");
+    out("  script run python <file>   Run a Python script");
+    out("  script run lua \"code\"      Run inline Lua code");
+    out("  script run python \"code\"  Run inline Python code");
 }
 
 void HeadlessCLI::cmdBacktrace(const std::vector<std::string>&) {
@@ -417,7 +554,7 @@ void HeadlessCLI::cmdTarget(const std::vector<std::string>& args) {
 }
 
 void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
-    out("NinjaDBG v1.0.3 CLI commands:\n"
+    out("NinjaDBG v1.0.4 CLI commands:\n"
         "  attach <pid>                  Attach to a running process\n"
         "  launch <bin> [args...]        Launch a new process under the debugger\n"
         "  detach                        Detach from the target\n"
@@ -434,6 +571,8 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
         "  x /Nxb <addr>                 Examine N bytes in hex\n"
         "  x /Nxw <addr>                 Examine N words\n"
         "  set <addr> = <byte>...        Write bytes to memory\n"
+        "  disas [addr] [count]          [v1.0.4] Full x86-64 disassembly\n"
+        "  edit [addr]                   [v1.0.4] Interactive TUI memory editor\n"
         "  bt | backtrace                Show call stack\n"
         "  target <binary>               Load a binary for static patching\n"
         "  patch list                    List applied patches\n"
@@ -446,6 +585,10 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
         "  kernel status                 Show kernel module status\n"
         "  kernel load                   Build + load the stealth LKM\n"
         "  kernel unload                 Unload the LKM\n"
+        "  script list                   [v1.0.4] Show scripting backend status\n"
+        "  script api                    [v1.0.4] Print Lua/Python API docs\n"
+        "  script run lua <file|code>    [v1.0.4] Run a Lua script\n"
+        "  script run python <file|code> [v1.0.4] Run a Python script\n"
         "  help                          Show this help\n"
         "  quit | q                      Exit NinjaDBG");
 }

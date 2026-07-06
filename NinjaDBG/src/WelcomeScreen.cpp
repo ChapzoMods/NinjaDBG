@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.3 - WelcomeScreen implementation
+// NinjaDBG v1.0.4 - WelcomeScreen implementation
 // Closed Source - Free - by Chapzoo
 #include "WelcomeScreen.h"
 #include <fstream>
@@ -30,7 +30,7 @@ bool WelcomeScreen::isEulaAccepted() {
     if (!f.good()) return false;
     std::string line;
     std::getline(f, line);
-    return line == "1.0.3";
+    return line == "1.0.4";
 }
 
 bool WelcomeScreen::acceptEula() {
@@ -39,14 +39,14 @@ bool WelcomeScreen::acceptEula() {
     std::system(cmd.c_str());
     std::ofstream f(eulaPath());
     if (!f) return false;
-    f << "1.0.3\n";
+    f << "1.0.4\n";
     f.close();
     return true;
 }
 
 std::string WelcomeScreen::welcomeMessage() {
     return R"WELCOME(
-Welcome to NinjaDBG v1.0.3 — Stealth Debugger
+Welcome to NinjaDBG v1.0.4 — Stealth Debugger
 
 NinjaDBG is a closed-source, free, native debugger for Linux x86-64 with
 experimental support for Windows (PE) and macOS (Mach-O) binaries.
@@ -58,6 +58,9 @@ This release adds:
   - Conditional + temporary breakpoints, watchpoints, step-over/step-out
   - Cross-platform debugging via Wine + QEMU adapters
   - Welcome screen + EULA
+  - [v1.0.4] Full x86-64 disassembler in CLI (disas command)
+  - [v1.0.4] Interactive TUI memory editor (edit command)
+  - [v1.0.4] Lua + Python scripting (script run command)
 
 IMPORTANT: The graphical interface is EXPERIMENTAL and still under active
 development. For production use, prefer the headless CLI (run `ninjadb --cli`).
@@ -67,7 +70,7 @@ development. For production use, prefer the headless CLI (run `ninjadb --cli`).
 std::string WelcomeScreen::eulaText() {
     return R"EULA(
 ==========================================================================
-   NinjaDBG v1.0.3 — END USER LICENSE AGREEMENT (EULA)
+   NinjaDBG v1.0.4 — END USER LICENSE AGREEMENT (EULA)
 ==========================================================================
 
 Copyright (c) 2026 Chapzoo (one person). All rights reserved.
@@ -77,7 +80,7 @@ THE TERMS OF THIS EULA. IF YOU DO NOT AGREE, DO NOT USE THE SOFTWARE.
 
 1. DEFINITIONS
 
-   "Software" means NinjaDBG v1.0.3, including the debugger binary
+   "Software" means NinjaDBG v1.0.4, including the debugger binary
    (ninjadb), the headless CLI, the graphical interface (experimental),
    the libninjastealth.so preload payload, the optional ninja_stealth.ko
    kernel module, and all accompanying documentation.
