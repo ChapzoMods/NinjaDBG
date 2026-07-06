@@ -1,4 +1,4 @@
-# NinjaDBG v1.0.4 - Build System
+# NinjaDBG v1.0.5 - Build System
 # Closed Source - Free - by Chapzoo
 CXX      := g++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-unused-but-set-variable \
@@ -24,7 +24,7 @@ all: $(BIN) target
 $(BIN): $(OBJS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(OBJS) -o $@ $(LDFLAGS)
-	@echo "[build] NinjaDBG v1.0.4 ready -> $@"
+	@echo "[build] NinjaDBG v1.0.5 ready -> $@"
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(dir $@)

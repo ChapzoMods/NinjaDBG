@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.4 - Disassembler implementation
+// NinjaDBG v1.0.5 - Disassembler implementation
 // Closed Source - Free - by Chapzoo
 #include "Disassembler.h"
 #include <cstring>

@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.4 - Interactive Memory Editor (TUI)
+// NinjaDBG v1.0.5 - Interactive Memory Editor (TUI)
 // Closed Source - Free - by Chapzoo
 //
 // A curses-like interactive memory viewer/editor that runs in the terminal.

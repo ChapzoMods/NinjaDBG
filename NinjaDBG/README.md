@@ -6,7 +6,7 @@
 
 ### Stealth-Aware Native Debugger for Linux x86-64<br/>with experimental Windows & macOS support
 
-**Version 1.0.4** · Closed Source · Free · Created by **Chapzoo**
+**Version 1.0.5** · Closed Source · Free · Created by **Chapzoo**
 
 [Features](#-features) · [Headless CLI](#-headless-cli) · [Kernel Stealth](#-kernel-level-stealth) · [Binary Patching](#-binary-patching) · [Cross-Platform](#-cross-platform-debugging) · [License](#-license)
 
@@ -39,14 +39,16 @@ It is purpose-built for analysts working against:
 - **Anti-cheat agents** that enumerate `/proc/<pid>/maps` looking for injected
   preload libraries, or that check parent process names against a denylist
 
-NinjaDBG v1.0.4 adds: a full-featured **headless CLI**, **kernel-level stealth**
+NinjaDBG v1.0.5 adds: a full-featured **headless CLI**, **kernel-level stealth**
 (via a loadable kernel module), a **binary patcher** for in-place static
 patches without attaching, **conditional + temporary breakpoints**, hardware
 **watchpoints**, real **step-over** and **step-out**, **syscall-entry
 stepping**, **cross-platform debugging** for Windows PE and macOS Mach-O
 binaries, a **welcome screen + EULA** flow, a **full standalone x86-64
 disassembler** in the CLI, an **interactive TUI memory editor** (hex+ASCII,
-no ncurses), and **Lua + Python scripting** via a JSON-RPC subprocess bridge.
+no ncurses), **Lua + Python scripting** via a JSON-RPC subprocess bridge,
+and **native C decompilation** via the Avast RetDec engine (with angr as an
+alternative backend).
 
 ---
 
@@ -79,6 +81,8 @@ no ncurses), and **Lua + Python scripting** via a JSON-RPC subprocess bridge.
 | **Full x86-64 disassembler (CLI)** | ✅ **NEW v1.0.4** | Standalone `Disassembler` module; covers GPR/SIMD/branch/system opcodes |
 | **Interactive TUI memory editor** | ✅ **NEW v1.0.4** | VT100 raw-mode editor; hex+ASCII, seek, search, follow-ptr, edit inline |
 | **Lua + Python scripting** | ✅ **NEW v1.0.4** | `script run lua/python <file>`; JSON-RPC subprocess bridge; full API |
+| **Native C decompilation (RetDec)** | ✅ **NEW v1.0.5** | `decomp` command; wraps Avast RetDec via dlopen + subprocess fallback |
+| **Alternative decompiler (angr)** | ✅ **NEW v1.0.5** | angr backend via `python3 -m angr` subprocess; per-function or whole-file |
 
 ### Stealth subsystem
 
@@ -215,6 +219,9 @@ ninjadb --cli --no-eula-check
 | `set <addr> = <byte>...` | Write bytes to memory |
 | `disas [addr] [count]` | **[v1.0.4]** Full x86-64 disassembly (defaults to current RIP) |
 | `edit [addr]` | **[v1.0.4]** Launch interactive TUI memory editor |
+| `decomp [addr] [max_bytes]` | **[v1.0.5]** Native C decompilation via RetDec/angr (defaults to RIP) |
+| `decomp file <bin> [addr]` | **[v1.0.5]** Decompile whole file or one function |
+| `decomp <list\|api\|set>` | **[v1.0.5]** Backend management |
 | `bt` / `backtrace` | Show call stack |
 | `target <binary>` | Load a binary for static patching |
 | `patch list` | List applied patches |
@@ -589,6 +596,135 @@ This design means:
 
 ---
 
+## 🔬 Decompilation — Native C via RetDec / angr (NEW v1.0.5)
+
+NinjaDBG v1.0.5 integrates **Avast's RetDec** decompiler as a native
+backend, with **angr** as an alternative. We do NOT reimplement
+decompilation from scratch — that would be tens of thousands of lines
+and years of work. Instead we wrap existing mature engines.
+
+### Backends
+
+| Backend | Mechanism | Latency | Best for |
+|---------|-----------|---------|----------|
+| **retdec-native** | `dlopen("libretdec.so")` + in-process call | Lowest | Per-function decompilation of live processes |
+| **retdec-subprocess** | Shell to `retdec-decompiler` binary | Medium (process spawn) | Whole-file decompilation, systems without libretdec.so |
+| **angr** | `python3 -c` subprocess using `angr.analyses.Decompiler` | High (Python + CFG analysis) | Stripped binaries, code recovery, alternative when RetDec unavailable |
+
+Backend selection is automatic (try native → subprocess → angr). You can
+force one with `decomp set <name>`.
+
+### Installation
+
+```bash
+# RetDec native (preferred for live-process decompilation)
+sudo apt-get install retdec-dev
+# OR from source:
+git clone https://github.com/avast/retdec
+cd retdec && cmake -DCMAKE_INSTALL_PREFIX=/usr/local . && make -j$(nproc) && sudo make install
+
+# RetDec subprocess
+sudo apt-get install retdec-utils
+
+# angr (alternative)
+pip3 install angr
+```
+
+Check what's available:
+
+```bash
+(ninjadb) decomp list
+```
+
+### CLI commands
+
+| Command | Description |
+|---------|-------------|
+| `decomp` | Decompile function at current RIP (live process) |
+| `decomp <addr>` | Decompile function at specific address (live process) |
+| `decomp <addr> <max_bytes>` | Limit input size (default 4096 bytes) |
+| `decomp file <binary>` | Decompile an entire binary file to C |
+| `decomp file <binary> <addr>` | Decompile one function in a static file |
+| `decomp list` | Show backend availability |
+| `decomp api` | Print full API documentation + install hints |
+| `decomp set <backend>` | Force backend (`auto`/`retdec-native`/`retdec-subprocess`/`angr`) |
+
+### How native RetDec integration works
+
+For live-process decompilation, NinjaDBG:
+
+1. Reads function bytes from the target via `process_vm_readv` (stealth).
+2. Wraps those bytes in a minimal ELF64 stub (`writeTempElfStub()`) with
+   a single PT_LOAD segment at the function's original virtual address,
+   so RetDec's address references match the live process.
+3. Calls `retdec_decompile()` (resolved via `dlsym` from `libretdec.so`)
+   with the stub path, output path, and selected address range.
+4. Reads the resulting `.c` file and returns it to the CLI.
+
+This means you can decompile a function **in a running process** without
+saving the binary to disk first — useful for unpacking scenarios where
+the on-disk binary is packed but the in-memory image is unpacked.
+
+### Example output
+
+```
+(ninjadb) attach 12345
+(ninjadb) decomp
+Decompiling function at current RIP = 0x00007F00A8889687 ...
+Backend: retdec-native  Elapsed: 847 ms
+Function: sub_0x7F00A8889687
+
+//
+// This file was generated by RetDec.
+//
+
+#include <stdint.h>
+
+int64_t sub_7F00A8889687(int32_t a1, int32_t a2) {
+    int64_t v1 = (int64_t)a1;
+    if (a1 == 0) {
+        return 0LL;
+    }
+    while (a2 != 0) {
+        v1 += a2;
+        a2 -= 1;
+    }
+    return v1;
+}
+```
+
+### angr backend specifics
+
+When using angr, NinjaDBG invokes:
+
+```python
+import angr
+p = angr.Project(binary, auto_load_libs=False)
+cfg = p.analyses.CFGFast()
+fn = cfg.kb.functions.get(target_addr)
+dec = p.analyses.Decompiler(fn)
+print(dec.codegen.text)
+```
+
+angr is slower (Python + full CFG recovery) but handles stripped binaries
+better and has more aggressive code recovery than RetDec in some cases.
+
+### Limitations
+
+- **RetDec native requires libretdec.so** — not packaged by all distros.
+  If unavailable, NinjaDBG falls back to subprocess mode automatically.
+- **angr requires ~500 MB of pip dependencies** (z3, pyvex, claripy, etc.).
+- **Stripped binaries**: both backends will name functions `sub_XXX` if
+  no symbol table is present. angr's `CFGFast` can sometimes recover
+  names from strings/PLT entries.
+- **C++ binaries**: RetDec produces C output even for C++ input; class
+  methods become free functions with mangled names.
+- **Self-modifying code**: live-process decompilation reads bytes at
+  the moment of the call — if the target JITs new code, the decompiled
+  output may not match what executes later.
+
+---
+
 ## 🏗️ Architecture
 
 ```
@@ -611,6 +747,7 @@ NinjaDBG/
 │   ├── Disassembler.h             Standalone x86-64 decoder   [NEW v1.0.4]
 │   ├── InteractiveMemoryEditor.h  TUI memory editor           [NEW v1.0.4]
 │   ├── ScriptEngine.h             Lua + Python scripting      [NEW v1.0.4]
+│   ├── Decompiler.h               RetDec + angr wrapper       [NEW v1.0.5]
 │   ├── UITheme.h                  Colors, fonts, layout constants
 │   └── MainWindow.h               X11+Cairo main window controller
 ├── src/
@@ -625,6 +762,7 @@ NinjaDBG/
 │   ├── Disassembler.cpp           Standalone x86-64 decoder               [NEW v1.0.4]
 │   ├── InteractiveMemoryEditor.cpp TUI memory editor (VT100 raw mode)     [NEW v1.0.4]
 │   ├── ScriptEngine.cpp           Lua + Python JSON-RPC subprocess bridge [NEW v1.0.4]
+│   ├── Decompiler.cpp             RetDec native + subprocess + angr        [NEW v1.0.5]
 │   ├── MainWindow.cpp             X11 event loop, actions, toolbar, logo render
 │   └── MainWindowPanels.cpp       Panel painting (disasm, mem, regs, modals, …)
 ├── scripts/
@@ -780,7 +918,8 @@ launch (also reproduced in `WelcomeScreen.cpp`). Acceptance is persisted to
 | 1.0.1 | AntiDetect module + preload payload | ✅ Released |
 | 1.0.2 | UI polish: SVG icons, modal fixes, logo redesign, README rewrite | ✅ Released |
 | 1.0.3 | Headless CLI, kernel stealth, binary patching, cross-platform, conditional bps, watchpoints, step-over/out, EULA | ✅ Released |
-| **1.0.4** | **Full x86-64 disassembler (CLI), interactive TUI memory editor, Lua + Python scripting** | ✅ **Released (this)** |
+| 1.0.4 | Full x86-64 disassembler (CLI), interactive TUI memory editor, Lua + Python scripting | ✅ Released |
+| **1.0.5** | **Native C decompilation via RetDec (dlopen) + angr backend** | ✅ **Released (this)** |
 | 1.1.0 | Conditional breakpoints GUI, watchpoints GUI, in-GUI memory editing, GUI disassembler upgrade | 🔜 Planned |
 | 1.2.0 | Capstone integration for full x86-64 / ARM64 disassembly | 🔜 Planned |
 | 1.3.0 | Remote debugging over TCP (gdbserver-style) | 🔜 Planned |
@@ -803,7 +942,7 @@ are not, since the source is closed.
 
 <div align="center">
 
-**NinjaDBG v1.0.4** · Closed Source · Free · by **Chapzoo**
+**NinjaDBG v1.0.5** · Closed Source · Free · by **Chapzoo**
 
 *Stay stealthy.* 🥷
 

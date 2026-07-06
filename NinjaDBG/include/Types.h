@@ -44,10 +44,10 @@ struct Breakpoint {
     int          hit_count = 0;
     std::string  condition;
     std::string  label;
-    bool         temporary = false;        // v1.0.4: auto-remove after first hit
-    bool         is_watchpoint = false;    // v1.0.4: watchpoint flag
-    int          watch_len = 0;            // v1.0.4: watch length (1/2/4/8)
-    int          watch_type = 0;           // v1.0.4: 0=W 1=RW 2=X
+    bool         temporary = false;        // v1.0.5: auto-remove after first hit
+    bool         is_watchpoint = false;    // v1.0.5: watchpoint flag
+    int          watch_len = 0;            // v1.0.5: watch length (1/2/4/8)
+    int          watch_type = 0;           // v1.0.5: 0=W 1=RW 2=X
 };
 
 struct RegisterSet {

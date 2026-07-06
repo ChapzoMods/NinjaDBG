@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.4 - Standalone x86-64 Disassembler
+// NinjaDBG v1.0.5 - Standalone x86-64 Disassembler
 // Closed Source - Free - by Chapzoo
 //
 // A from-scratch length-disassembler + mnemonic decoder for x86-64.

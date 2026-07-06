@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.4 - Script Engine (Lua + Python)
+// NinjaDBG v1.0.5 - Script Engine (Lua + Python)
 // Closed Source - Free - by Chapzoo
 //
 // Allows users to script NinjaDBG via either Lua or Python. The engine

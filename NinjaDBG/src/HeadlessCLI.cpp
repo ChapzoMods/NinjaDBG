@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.4 - HeadlessCLI implementation
+// NinjaDBG v1.0.5 - HeadlessCLI implementation
 // Closed Source - Free - by Chapzoo
 #include "HeadlessCLI.h"
 #include "WelcomeScreen.h"
@@ -35,9 +35,9 @@ void HeadlessCLI::printBanner() {
         " | |\\  | | |_| | | | (_| | | | |_| |\\___ \\ \n"
         " |_| \\_|_|\\__|_| |_|\\__,_|_|  \\___/|____) |\n"
         "\n"
-        "  v1.0.4 — Stealth Debugger  (Closed Source - Free - by Chapzoo)\n"
+        "  v1.0.5 — Stealth Debugger  (Closed Source - Free - by Chapzoo)\n"
         "  Headless CLI mode. Type 'help' for command list, 'quit' to exit.\n"
-        "  New in v1.0.4: disas (full x86-64), edit (TUI), script (Lua/Python)\n"
+        "  New in v1.0.5: decomp (native C decompilation via RetDec/angr)\n"
         "\n";
 }
 
@@ -131,6 +131,7 @@ void HeadlessCLI::execute(const std::string& line) {
     else if (cmd == "set") cmdSet(args);
     else if (cmd == "disas" || cmd == "dis") cmdDisas(args);
     else if (cmd == "edit")   cmdEdit(args);
+    else if (cmd == "decomp" || cmd == "dec") cmdDecomp(args);
     else if (cmd == "script") cmdScript(args);
     else if (cmd == "backtrace" || cmd == "bt") cmdBacktrace(args);
     else if (cmd == "patch") cmdPatch(args);
@@ -360,6 +361,126 @@ void HeadlessCLI::cmdEdit(const std::vector<std::string>& args) {
     out("Returned from editor.");
 }
 
+void HeadlessCLI::cmdDecomp(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        // No args: decompile function at current RIP (live process)
+        if (dbg_.pid() == 0) { printDecompStatus(); return; }
+        RegisterSet r;
+        if (!dbg_.readRegisters(r)) { err("readRegisters failed"); return; }
+        out("Decompiling function at current RIP = " + hex(r.rip) + " ...");
+        auto res = decompiler_.decompileFunction(dbg_, r.rip, 0x1000);
+        if (!res.ok) {
+            err("Decompile failed: " + res.error);
+            if (res.error.find("not available") != std::string::npos ||
+                res.error.find("No decompiler") != std::string::npos) {
+                err("Run 'decomp list' to see backend status, or 'decomp api' for install hints.");
+            }
+            return;
+        }
+        out("Backend: " + res.backend_used + "  Elapsed: " + std::to_string((int)res.elapsed_ms) + " ms");
+        out("Function: " + res.function_name);
+        std::cout << "\n" << res.c_code << std::endl;
+        return;
+    }
+    std::string sub = args[0];
+
+    // decomp list
+    if (sub == "list") {
+        printDecompStatus();
+        return;
+    }
+    // decomp api
+    if (sub == "api") {
+        std::cout << Decompiler::apiDocs() << std::endl;
+        return;
+    }
+    // decomp set <backend>
+    if (sub == "set") {
+        if (args.size() < 2) { err("usage: decomp set <retdec-native|retdec-subprocess|angr|auto>"); return; }
+        std::string b = args[1];
+        if (b == "auto")              decompiler_.setBackend(Decompiler::Backend::Auto);
+        else if (b == "retdec-native")decompiler_.setBackend(Decompiler::Backend::RetDecNative);
+        else if (b == "retdec-subprocess") decompiler_.setBackend(Decompiler::Backend::RetDecSubprocess);
+        else if (b == "retdec")       decompiler_.setBackend(Decompiler::Backend::RetDecNative);
+        else if (b == "angr")         decompiler_.setBackend(Decompiler::Backend::Angr);
+        else { err("unknown backend: " + b); return; }
+        out("Decompiler backend set to: " + b);
+        return;
+    }
+    // decomp file <binary> [addr]
+    if (sub == "file") {
+        if (args.size() < 2) {
+            err("usage: decomp file <binary> [addr]");
+            return;
+        }
+        std::string bin = args[1];
+        if (args.size() >= 3) {
+            // Decompile one function in a file
+            bool ok; addr_t a = parseAddr(args[2], &ok);
+            if (!ok) { err("bad address: " + args[2]); return; }
+            out("Decompiling function at " + hex(a) + " in " + bin + " ...");
+            auto r = decompiler_.decompileFunctionInFile(bin, a);
+            if (!r.ok) { err("Decompile failed: " + r.error); return; }
+            out("Backend: " + r.backend_used + "  Elapsed: " + std::to_string((int)r.elapsed_ms) + " ms");
+            out("Function: " + r.function_name);
+            std::cout << "\n" << r.c_code << std::endl;
+        } else {
+            // Decompile whole file
+            out("Decompiling entire file: " + bin + " ...");
+            auto r = decompiler_.decompileFile(bin);
+            if (!r.ok) { err("Decompile failed: " + r.error); return; }
+            out("Backend: " + r.backend_used + "  Elapsed: " + std::to_string((int)r.elapsed_ms) + " ms");
+            std::cout << "\n" << r.c_code << std::endl;
+        }
+        return;
+    }
+
+    // decomp <addr> [max_bytes]  - decompile function in live process
+    bool ok; addr_t addr = parseAddr(sub, &ok);
+    if (!ok) { err("unknown decomp subcommand: " + sub + "\n  usage: decomp [addr|file|list|api|set]"); return; }
+    if (dbg_.pid() == 0) { err("Not attached. Use 'attach <pid>' first."); return; }
+    size_t max_bytes = 0x1000;
+    if (args.size() > 1) {
+        max_bytes = (size_t)strtoull(args[1].c_str(), nullptr, 0);
+        if (max_bytes == 0) max_bytes = 0x1000;
+    }
+    out("Decompiling function at " + hex(addr) + " (max " + std::to_string(max_bytes) + " bytes) ...");
+    auto r = decompiler_.decompileFunction(dbg_, addr, max_bytes);
+    if (!r.ok) {
+        err("Decompile failed: " + r.error);
+        if (r.error.find("not available") != std::string::npos ||
+            r.error.find("No decompiler") != std::string::npos) {
+            err("Run 'decomp list' to see backend status, or 'decomp api' for install hints.");
+        }
+        return;
+    }
+    out("Backend: " + r.backend_used + "  Elapsed: " + std::to_string((int)r.elapsed_ms) + " ms");
+    out("Function: " + r.function_name);
+    std::cout << "\n" << r.c_code << std::endl;
+}
+
+void HeadlessCLI::printDecompStatus() {
+    out("Decompiler backend status:");
+    out(std::string("  retdec-native:     ") +
+        (decompiler_.isRetDecNativeAvailable() ? "[AVAILABLE]" : "[NOT INSTALLED]"));
+    out(std::string("  retdec-subprocess: ") +
+        (decompiler_.isRetDecSubprocessAvailable() ? "[AVAILABLE]" : "[NOT INSTALLED]"));
+    out(std::string("  angr:              ") +
+        (decompiler_.isAngrAvailable() ? "[AVAILABLE]" : "[NOT INSTALLED]"));
+    auto avail = decompiler_.detectAvailable();
+    out(std::string("  current selection: ") + Decompiler::backendName(decompiler_.currentBackend()) +
+        "  (auto-detected: " + Decompiler::backendName(avail) + ")");
+    out("");
+    out("Available commands:");
+    out("  decomp <addr>                Decompile function at addr (live process)");
+    out("  decomp <addr> <max_bytes>    Limit input size (default 4096)");
+    out("  decomp file <binary>         Decompile whole binary file");
+    out("  decomp file <binary> <addr>  Decompile one function in a file");
+    out("  decomp list                  Show this status");
+    out("  decomp api                   Show install hints + API docs");
+    out("  decomp set <backend>         Force backend (auto/retdec-native/retdec-subprocess/angr)");
+}
+
 void HeadlessCLI::cmdScript(const std::vector<std::string>& args) {
     if (args.empty()) { printScriptStatus(); return; }
     std::string sub = args[0];
@@ -554,7 +675,7 @@ void HeadlessCLI::cmdTarget(const std::vector<std::string>& args) {
 }
 
 void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
-    out("NinjaDBG v1.0.4 CLI commands:\n"
+    out("NinjaDBG v1.0.5 CLI commands:\n"
         "  attach <pid>                  Attach to a running process\n"
         "  launch <bin> [args...]        Launch a new process under the debugger\n"
         "  detach                        Detach from the target\n"
@@ -571,8 +692,11 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
         "  x /Nxb <addr>                 Examine N bytes in hex\n"
         "  x /Nxw <addr>                 Examine N words\n"
         "  set <addr> = <byte>...        Write bytes to memory\n"
-        "  disas [addr] [count]          [v1.0.4] Full x86-64 disassembly\n"
-        "  edit [addr]                   [v1.0.4] Interactive TUI memory editor\n"
+        "  disas [addr] [count]          [v1.0.5] Full x86-64 disassembly\n"
+        "  edit [addr]                   [v1.0.5] Interactive TUI memory editor\n"
+        "  decomp [addr] [max_bytes]     [v1.0.5] Native C decompilation via RetDec/angr\n"
+        "  decomp file <bin> [addr]      [v1.0.5] Decompile whole file or one function\n"
+        "  decomp <list|api|set>         [v1.0.5] Backend management\n"
         "  bt | backtrace                Show call stack\n"
         "  target <binary>               Load a binary for static patching\n"
         "  patch list                    List applied patches\n"
@@ -585,10 +709,10 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>&) {
         "  kernel status                 Show kernel module status\n"
         "  kernel load                   Build + load the stealth LKM\n"
         "  kernel unload                 Unload the LKM\n"
-        "  script list                   [v1.0.4] Show scripting backend status\n"
-        "  script api                    [v1.0.4] Print Lua/Python API docs\n"
-        "  script run lua <file|code>    [v1.0.4] Run a Lua script\n"
-        "  script run python <file|code> [v1.0.4] Run a Python script\n"
+        "  script list                   [v1.0.5] Show scripting backend status\n"
+        "  script api                    [v1.0.5] Print Lua/Python API docs\n"
+        "  script run lua <file|code>    [v1.0.5] Run a Lua script\n"
+        "  script run python <file|code> [v1.0.5] Run a Python script\n"
         "  help                          Show this help\n"
         "  quit | q                      Exit NinjaDBG");
 }

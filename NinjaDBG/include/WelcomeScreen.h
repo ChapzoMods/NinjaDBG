@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.4 - Welcome screen + EULA
+// NinjaDBG v1.0.5 - Welcome screen + EULA
 // Closed Source - Free - by Chapzoo
 //
 // First-run experience: a welcome screen introducing NinjaDBG, followed by

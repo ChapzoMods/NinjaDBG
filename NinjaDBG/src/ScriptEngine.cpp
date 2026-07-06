@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.4 - ScriptEngine implementation
+// NinjaDBG v1.0.5 - ScriptEngine implementation
 // Closed Source - Free - by Chapzoo
 #include "ScriptEngine.h"
 #include <iostream>

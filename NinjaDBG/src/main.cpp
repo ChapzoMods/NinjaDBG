@@ -1,4 +1,4 @@
-// NinjaDBG v1.0.4 - Entry point
+// NinjaDBG v1.0.5 - Entry point
 // Closed Source - Free - by Chapzoo
 //
 // Mode selection:
@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
         if (std::string(argv[i]) == "--no-eula-check") no_eula = true;
         if (std::string(argv[i]) == "--help" || std::string(argv[i]) == "-h") {
             std::cout <<
-                "NinjaDBG v1.0.4 — Stealth Debugger\n"
+                "NinjaDBG v1.0.5 — Stealth Debugger\n"
                 "Closed Source - Free - Created by Chapzoo\n\n"
                 "Usage:\n"
                 "  ninjadb                  Launch GUI (EXPERIMENTAL — under development)\n"
@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
     }
 
     // GUI mode (experimental)
-    std::cout << "NinjaDBG v1.0.4 - Stealth Debugger" << std::endl;
+    std::cout << "NinjaDBG v1.0.5 - Stealth Debugger" << std::endl;
     std::cout << "Closed Source - Free - Created by Chapzoo" << std::endl;
     std::cout << std::endl;
     std::cout << "*** NOTE: The GUI is EXPERIMENTAL and still under active development. ***" << std::endl;
@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
     }
     w.setStatus("Ready - click [Attach] to debug a process  -  GUI is EXPERIMENTAL");
     w.log("GUI is EXPERIMENTAL — for full features use: ninjadb --cli", "warn");
-    w.log("v1.0.4 adds: headless CLI, kernel stealth, binary patching, "
+    w.log("v1.0.5 adds: headless CLI, kernel stealth, binary patching, "
           "conditional bps, watchpoints, step-over/step-out, cross-platform (Win/Mac)", "info");
     w.run();
     return 0;
