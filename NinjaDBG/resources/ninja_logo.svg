@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1d2e"/>
+      <stop offset="100%" stop-color="#0d0f1a"/>
+    </linearGradient>
+    <linearGradient id="maskGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2a2f48"/>
+      <stop offset="100%" stop-color="#0f111c"/>
+    </linearGradient>
+    <linearGradient id="eyeGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00ffe1"/>
+      <stop offset="50%" stop-color="#00b8a0"/>
+      <stop offset="100%" stop-color="#00ffe1"/>
+    </linearGradient>
+    <linearGradient id="headband" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b0000"/>
+      <stop offset="50%" stop-color="#c41e3a"/>
+      <stop offset="100%" stop-color="#8b0000"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="4"/>
+      <feOffset dx="0" dy="4" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.5"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect x="8" y="8" width="240" height="240" rx="48" ry="48" fill="url(#bgGrad)" stroke="#00ffe1" stroke-width="2" opacity="0.95"/>
+
+  <!-- Subtle grid pattern -->
+  <g opacity="0.06" stroke="#00ffe1" stroke-width="1">
+    <line x1="48" y1="8" x2="48" y2="248"/>
+    <line x1="88" y1="8" x2="88" y2="248"/>
+    <line x1="128" y1="8" x2="128" y2="248"/>
+    <line x1="168" y1="8" x2="168" y2="248"/>
+    <line x1="208" y1="8" x2="208" y2="248"/>
+    <line x1="8" y1="48" x2="248" y2="48"/>
+    <line x1="8" y1="88" x2="248" y2="88"/>
+    <line x1="8" y1="128" x2="248" y2="128"/>
+    <line x1="8" y1="168" x2="248" y2="168"/>
+    <line x1="8" y1="208" x2="248" y2="208"/>
+  </g>
+
+  <!-- Ninja head outline (mask base) -->
+  <g filter="url(#softShadow)">
+    <!-- Head shape -->
+    <ellipse cx="128" cy="120" rx="72" ry="82" fill="url(#maskGrad)" stroke="#3a4060" stroke-width="1.5"/>
+
+    <!-- Headband (red) -->
+    <path d="M 56 96 Q 128 84 200 96 L 200 116 Q 128 104 56 116 Z" fill="url(#headband)" stroke="#5a0000" stroke-width="0.8"/>
+
+    <!-- Headband knot tails -->
+    <path d="M 200 100 L 224 92 L 218 108 L 230 112 L 208 116 Z" fill="url(#headband)" stroke="#5a0000" stroke-width="0.6"/>
+    <path d="M 56 100 L 32 92 L 38 108 L 26 112 L 48 116 Z" fill="url(#headband)" stroke="#5a0000" stroke-width="0.6"/>
+
+    <!-- Symbol on headband: dragon claw / shuriken mark -->
+    <g transform="translate(128, 106)" filter="url(#glow)">
+      <circle cx="0" cy="0" r="6" fill="none" stroke="#ffd700" stroke-width="1.5"/>
+      <path d="M 0 -8 L 1.5 -3 L 6 -3 L 2.5 0 L 4 5 L 0 2 L -4 5 L -2.5 0 L -6 -3 L -1.5 -3 Z" fill="#ffd700"/>
+    </g>
+
+    <!-- Eye area cut-out (the iconic ninja mask eye slit) -->
+    <path d="M 70 138 Q 128 124 186 138 L 186 162 Q 128 148 70 162 Z" fill="#000000" opacity="0.95"/>
+
+    <!-- Glowing eyes -->
+    <g filter="url(#glow)">
+      <!-- Left eye -->
+      <ellipse cx="100" cy="148" rx="14" ry="6" fill="url(#eyeGlow)"/>
+      <ellipse cx="100" cy="148" rx="6" ry="3.5" fill="#ffffff" opacity="0.9"/>
+      <!-- Right eye -->
+      <ellipse cx="156" cy="148" rx="14" ry="6" fill="url(#eyeGlow)"/>
+      <ellipse cx="156" cy="148" rx="6" ry="3.5" fill="#ffffff" opacity="0.9"/>
+    </g>
+
+    <!-- Lower face mask (clothed part covering nose-down) -->
+    <path d="M 72 170 Q 128 184 184 170 L 184 200 Q 128 214 72 200 Z" fill="url(#maskGrad)" stroke="#3a4060" stroke-width="1.2"/>
+
+    <!-- Mask fold lines -->
+    <g stroke="#1a1d2e" stroke-width="1" fill="none" opacity="0.7">
+      <path d="M 80 178 Q 128 188 176 178"/>
+      <path d="M 84 190 Q 128 200 172 190"/>
+    </g>
+
+    <!-- Crossed katanas behind head (subtle) -->
+    <g opacity="0.35" stroke="#5a6080" stroke-width="2" fill="none">
+      <line x1="48" y1="220" x2="208" y2="48" stroke-linecap="round"/>
+      <line x1="208" y1="220" x2="48" y2="48" stroke-linecap="round"/>
+      <circle cx="128" cy="134" r="5" fill="#3a4060" stroke="#5a6080" stroke-width="1.5"/>
+    </g>
+  </g>
+
+  <!-- Corner accents -->
+  <g stroke="#00ffe1" stroke-width="2" fill="none" opacity="0.8">
+    <path d="M 20 40 L 20 20 L 40 20"/>
+    <path d="M 216 20 L 236 20 L 236 40"/>
+    <path d="M 20 216 L 20 236 L 40 236"/>
+    <path d="M 216 236 L 236 236 L 236 216"/>
+  </g>
+
+  <!-- Bottom text mark -->
+  <text x="128" y="244" font-family="monospace" font-size="9" fill="#00ffe1" text-anchor="middle" opacity="0.7" letter-spacing="2">NINJADBG</text>
+</svg>
