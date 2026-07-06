@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <title>NinjaDBG — Stealth-Aware Native Debugger</title>
+ <meta name="description" content="Open-source C++17 debugger for Linux x86-64 with anti-detect stealth, decompilation, pretty printers, and cross-platform support.">
+ <link rel="icon" type="image/svg+xml" href="favicon.svg">
+ <style>
+ :root {
+ --bg: #0d0f1a;
+ --bg-alt: #14161f;
+ --panel: #1b1e2c;
+ --panel-elevated: #252a40;
+ --border: #33384f;
+ --text: #e6e8f0;
+ --text-dim: #8a8fa3;
+ --accent: #00ffe1;
+ --accent-dim: #006b62;
+ --warn: #ffb454;
+ --error: #ff4d6d;
+ --ok: #4ade80;
+ --red: #c41e3a;
+ }
+ * { margin: 0; padding: 0; box-sizing: border-box; }
+ html { scroll-behavior: smooth; }
+ body {
+ font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+ background: var(--bg);
+ color: var(--text);
+ line-height: 1.6;
+ overflow-x: hidden;
+ }
+
+ /* ===== Animated background ===== */
+ .bg-grid {
+ position: fixed;
+ top: 0; left: 0;
+ width: 100%; height: 100%;
+ background-image:
+ linear-gradient(rgba(0,255,225,0.03) 1px, transparent 1px),
+ linear-gradient(90deg, rgba(0,255,225,0.03) 1px, transparent 1px);
+ background-size: 40px 40px;
+ z-index: -2;
+ animation: gridMove 20s linear infinite;
+ }
+ @keyframes gridMove {
+ 0% { background-position: 0 0; }
+ 100% { background-position: 40px 40px; }
+ }
+ .bg-glow {
+ position: fixed;
+ top: -20%; left: 50%;
+ transform: translateX(-50%);
+ width: 800px; height: 800px;
+ background: radial-gradient(circle, rgba(0,255,225,0.08) 0%, transparent 60%);
+ z-index: -1;
+ pointer-events: none;
+ }
+
+ /* ===== Navbar ===== */
+ nav {
+ position: fixed;
+ top: 0; left: 0; right: 0;
+ z-index: 100;
+ background: rgba(13,15,26,0.85);
+ backdrop-filter: blur(12px);
+ border-bottom: 1px solid var(--border);
+ padding: 0 2rem;
+ height: 64px;
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ }
+ nav .logo {
+ display: flex;
+ align-items: center;
+ gap: 12px;
+ font-size: 1.3rem;
+ font-weight: 700;
+ color: var(--text);
+ text-decoration: none;
+ }
+ nav .logo img { width: 36px; height: 36px; border-radius: 8px; }
+ nav .logo .version {
+ font-size: 0.7rem;
+ color: var(--accent);
+ background: rgba(0,255,225,0.1);
+ padding: 2px 8px;
+ border-radius: 4px;
+ border: 1px solid var(--accent-dim);
+ }
+ nav ul {
+ display: flex;
+ gap: 2rem;
+ list-style: none;
+ }
+ nav ul a {
+ color: var(--text-dim);
+ text-decoration: none;
+ font-size: 0.95rem;
+ transition: color 0.2s;
+ }
+ nav ul a:hover { color: var(--accent); }
+ nav .cta {
+ display: flex;
+ gap: 12px;
+ }
+ nav .btn {
+ padding: 8px 18px;
+ border-radius: 6px;
+ font-size: 0.9rem;
+ font-weight: 600;
+ text-decoration: none;
+ transition: all 0.2s;
+ display: inline-flex;
+ align-items: center;
+ gap: 8px;
+ }
+ nav .btn-star {
+ background: var(--panel-elevated);
+ color: var(--text);
+ border: 1px solid var(--border);
+ }
+ nav .btn-star:hover {
+ background: var(--panel);
+ border-color: var(--accent);
+ }
+ nav .btn-download {
+ background: var(--accent);
+ color: var(--bg);
+ }
+ nav .btn-download:hover {
+ background: #00d9bf;
+ transform: translateY(-1px);
+ }
+
+ /* ===== Hero ===== */
+ .hero {
+ min-height: 100vh;
+ display: flex;
+ flex-direction: column;
+ align-items: center;
+ justify-content: center;
+ text-align: center;
+ padding: 100px 2rem 40px;
+ position: relative;
+ }
+ .hero .badge {
+ display: inline-flex;
+ align-items: center;
+ gap: 8px;
+ background: rgba(0,255,225,0.1);
+ border: 1px solid var(--accent-dim);
+ color: var(--accent);
+ padding: 6px 16px;
+ border-radius: 20px;
+ font-size: 0.85rem;
+ font-weight: 600;
+ margin-bottom: 2rem;
+ animation: fadeInUp 0.8s ease;
+ }
+ .hero .badge .dot {
+ width: 8px; height: 8px;
+ background: var(--ok);
+ border-radius: 50%;
+ animation: pulse 2s ease-in-out infinite;
+ }
+ @keyframes pulse {
+ 0%, 100% { opacity: 1; }
+ 50% { opacity: 0.4; }
+ }
+ .hero h1 {
+ font-size: clamp(2.5rem, 7vw, 5rem);
+ font-weight: 800;
+ line-height: 1.05;
+ margin-bottom: 1.5rem;
+ background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
+ -webkit-background-clip: text;
+ -webkit-text-fill-color: transparent;
+ background-clip: text;
+ animation: fadeInUp 0.8s ease 0.1s both;
+ }
+ .hero h1 .ninja { font-size: 0.6em; vertical-align: middle; }
+ .hero .tagline {
+ font-size: clamp(1.1rem, 2.5vw, 1.5rem);
+ color: var(--text-dim);
+ max-width: 700px;
+ margin-bottom: 2.5rem;
+ animation: fadeInUp 0.8s ease 0.2s both;
+ }
+ .hero .tagline strong { color: var(--accent); }
+ .hero .actions {
+ display: flex;
+ gap: 16px;
+ flex-wrap: wrap;
+ justify-content: center;
+ animation: fadeInUp 0.8s ease 0.3s both;
+ }
+ .hero .btn-big {
+ padding: 14px 32px;
+ border-radius: 8px;
+ font-size: 1.05rem;
+ font-weight: 700;
+ text-decoration: none;
+ transition: all 0.25s;
+ display: inline-flex;
+ align-items: center;
+ gap: 10px;
+ }
+ .hero .btn-primary {
+ background: var(--accent);
+ color: var(--bg);
+ box-shadow: 0 4px 20px rgba(0,255,225,0.3);
+ }
+ .hero .btn-primary:hover {
+ transform: translateY(-2px);
+ box-shadow: 0 6px 30px rgba(0,255,225,0.5);
+ }
+ .hero .btn-secondary {
+ background: var(--panel);
+ color: var(--text);
+ border: 1px solid var(--border);
+ }
+ .hero .btn-secondary:hover {
+ border-color: var(--accent);
+ color: var(--accent);
+ }
+ .hero .stats {
+ display: flex;
+ gap: 3rem;
+ margin-top: 3.5rem;
+ animation: fadeInUp 0.8s ease 0.4s both;
+ }
+ .hero .stat {
+ text-align: center;
+ }
+ .hero .stat .num {
+ font-size: 2rem;
+ font-weight: 800;
+ color: var(--accent);
+ }
+ .hero .stat .label {
+ font-size: 0.85rem;
+ color: var(--text-dim);
+ text-transform: uppercase;
+ letter-spacing: 1px;
+ }
+ @keyframes fadeInUp {
+ from { opacity: 0; transform: translateY(30px); }
+ to { opacity: 1; transform: translateY(0); }
+ }
+
+ /* ===== Sections ===== */
+ section {
+ padding: 6rem 2rem;
+ max-width: 1200px;
+ margin: 0 auto;
+ }
+ section h2 {
+ font-size: clamp(2rem, 4vw, 2.8rem);
+ font-weight: 700;
+ margin-bottom: 1rem;
+ text-align: center;
+ }
+ section h2 .accent { color: var(--accent); }
+ section .subtitle {
+ text-align: center;
+ color: var(--text-dim);
+ font-size: 1.15rem;
+ margin-bottom: 3.5rem;
+ }
+
+ /* ===== Feature grid ===== */
+ .features {
+ display: grid;
+ grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+ gap: 1.5rem;
+ }
+ .feature-card {
+ background: var(--panel);
+ border: 1px solid var(--border);
+ border-radius: 12px;
+ padding: 2rem;
+ transition: all 0.3s;
+ position: relative;
+ overflow: hidden;
+ }
+ .feature-card::before {
+ content: '';
+ position: absolute;
+ top: 0; left: 0;
+ width: 100%; height: 3px;
+ background: linear-gradient(90deg, var(--accent), transparent);
+ opacity: 0;
+ transition: opacity 0.3s;
+ }
+ .feature-card:hover {
+ border-color: var(--accent-dim);
+ transform: translateY(-4px);
+ box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+ }
+ .feature-card:hover::before { opacity: 1; }
+ .feature-card .icon {
+ font-size: 2.5rem;
+ margin-bottom: 1rem;
+ }
+ .feature-card h3 {
+ font-size: 1.25rem;
+ margin-bottom: 0.75rem;
+ color: var(--text);
+ }
+ .feature-card p {
+ color: var(--text-dim);
+ font-size: 0.95rem;
+ line-height: 1.6;
+ }
+ .feature-card .tag {
+ display: inline-block;
+ background: rgba(0,255,225,0.1);
+ color: var(--accent);
+ font-size: 0.75rem;
+ font-weight: 600;
+ padding: 3px 10px;
+ border-radius: 4px;
+ margin-top: 0.75rem;
+ }
+ .feature-card .tag.new { background: rgba(74,222,128,0.15); color: var(--ok); }
+
+ /* ===== Code block ===== */
+ .code-section {
+ background: var(--bg-alt);
+ border: 1px solid var(--border);
+ border-radius: 12px;
+ overflow: hidden;
+ margin: 2rem 0;
+ }
+ .code-header {
+ background: var(--panel-elevated);
+ padding: 12px 20px;
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ border-bottom: 1px solid var(--border);
+ }
+ .code-header .dot {
+ width: 12px; height: 12px;
+ border-radius: 50%;
+ }
+ .code-header .dot.r { background: #ff5f56; }
+ .code-header .dot.y { background: #ffbd2e; }
+ .code-header .dot.g { background: #27c93f; }
+ .code-header .title {
+ margin-left: 12px;
+ color: var(--text-dim);
+ font-size: 0.85rem;
+ font-family: 'Fira Code', 'Courier New', monospace;
+ }
+ .code-block {
+ padding: 1.5rem;
+ overflow-x: auto;
+ font-family: 'Fira Code', 'Courier New', monospace;
+ font-size: 0.9rem;
+ line-height: 1.7;
+ }
+ .code-block .comment { color: #5a6075; }
+ .code-block .keyword { color: #c678dd; }
+ .code-block .string { color: #98c379; }
+ .code-block .number { color: #d19a66; }
+ .code-block .fn { color: #61afef; }
+ .code-block .var { color: #e06c75; }
+ .code-block .accent { color: var(--accent); }
+ .code-block .prompt { color: var(--warn); }
+
+ /* ===== Anti-detect table ===== */
+ .table-wrapper {
+ overflow-x: auto;
+ border-radius: 12px;
+ border: 1px solid var(--border);
+ }
+ table {
+ width: 100%;
+ border-collapse: collapse;
+ font-size: 0.92rem;
+ }
+ table th {
+ background: var(--panel-elevated);
+ color: var(--accent);
+ padding: 14px 18px;
+ text-align: left;
+ font-weight: 600;
+ border-bottom: 1px solid var(--border);
+ }
+ table td {
+ padding: 14px 18px;
+ border-bottom: 1px solid rgba(51,56,79,0.5);
+ color: var(--text);
+ }
+ table tr:hover td { background: rgba(0,255,225,0.03); }
+ table .check { color: var(--ok); font-weight: 700; }
+
+ /* ===== Languages ===== */
+ .languages {
+ display: flex;
+ flex-wrap: wrap;
+ gap: 1rem;
+ justify-content: center;
+ }
+ .lang-badge {
+ background: var(--panel);
+ border: 1px solid var(--border);
+ border-radius: 8px;
+ padding: 1rem 2rem;
+ display: flex;
+ flex-direction: column;
+ align-items: center;
+ gap: 0.5rem;
+ min-width: 120px;
+ transition: all 0.2s;
+ }
+ .lang-badge:hover {
+ border-color: var(--accent);
+ transform: translateY(-2px);
+ }
+ .lang-badge .name {
+ font-weight: 700;
+ color: var(--text);
+ }
+ .lang-badge .types {
+ font-size: 0.8rem;
+ color: var(--text-dim);
+ }
+
+ /* ===== Comparison ===== */
+ .compare-grid {
+ display: grid;
+ grid-template-columns: 1fr 1fr;
+ gap: 2rem;
+ margin-top: 2rem;
+ }
+ .compare-col {
+ background: var(--panel);
+ border: 1px solid var(--border);
+ border-radius: 12px;
+ padding: 2rem;
+ }
+ .compare-col h3 {
+ font-size: 1.3rem;
+ margin-bottom: 1.5rem;
+ padding-bottom: 0.75rem;
+ border-bottom: 1px solid var(--border);
+ }
+ .compare-col .item {
+ display: flex;
+ align-items: flex-start;
+ gap: 10px;
+ margin-bottom: 0.75rem;
+ color: var(--text-dim);
+ }
+ .compare-col .item .icon { flex-shrink: 0; font-size: 1.1rem; }
+ .compare-col.yes .item .icon { color: var(--ok); }
+ .compare-col.no .item .icon { color: var(--error); }
+ .compare-col.no h3 { color: var(--text-dim); }
+ .compare-col.yes h3 { color: var(--accent); }
+
+ /* ===== CTA ===== */
+ .cta-section {
+ text-align: center;
+ background: linear-gradient(135deg, rgba(0,255,225,0.05), rgba(196,30,58,0.05));
+ border: 1px solid var(--border);
+ border-radius: 16px;
+ padding: 4rem 2rem;
+ margin: 4rem auto;
+ max-width: 900px;
+ }
+ .cta-section h2 { margin-bottom: 1rem; }
+ .cta-section p {
+ color: var(--text-dim);
+ font-size: 1.1rem;
+ margin-bottom: 2rem;
+ }
+
+ /* ===== Footer ===== */
+ footer {
+ background: var(--bg-alt);
+ border-top: 1px solid var(--border);
+ padding: 3rem 2rem 2rem;
+ text-align: center;
+ }
+ footer .logo {
+ display: inline-flex;
+ align-items: center;
+ gap: 10px;
+ font-size: 1.2rem;
+ font-weight: 700;
+ margin-bottom: 1rem;
+ }
+ footer .logo img { width: 32px; height: 32px; border-radius: 6px; }
+ footer p { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 1.5rem; }
+ footer .links {
+ display: flex;
+ gap: 1.5rem;
+ justify-content: center;
+ flex-wrap: wrap;
+ }
+ footer .links a {
+ color: var(--text-dim);
+ text-decoration: none;
+ transition: color 0.2s;
+ }
+ footer .links a:hover { color: var(--accent); }
+ footer .copyright {
+ margin-top: 2rem;
+ color: var(--text-dim);
+ font-size: 0.85rem;
+ opacity: 0.7;
+ }
+
+ /* ===== Responsive ===== */
+ @media (max-width: 768px) {
+ nav ul { display: none; }
+ .hero .stats { gap: 1.5rem; }
+ .compare-grid { grid-template-columns: 1fr; }
+ section { padding: 4rem 1rem; }
+ }
+ </style>
+</head>
+<body>
+ <div class="bg-grid"></div>
+ <div class="bg-glow"></div>
+
+ <!-- ===== Navbar ===== -->
+ <nav>
+ <a href="#" class="logo">
+ <img src="ninja_logo.png" alt="NinjaDBG">
+ NinjaDBG
+ <span class="version">v1.1.3</span>
+ </a>
+ <ul>
+ <li><a href="#features">Features</a></li>
+ <li><a href="#antidetect">Stealth</a></li>
+ <li><a href="#decompilation">Decompilation</a></li>
+ <li><a href="#pretty">Pretty Printers</a></li>
+ <li><a href="#install">Install</a></li>
+ </ul>
+ <div class="cta">
+ <a href="https://github.com/ChapzoMods/NinjaDBG" class="btn btn-star" target="_blank">
+ Star
+ </a>
+ <a href="https://github.com/ChapzoMods/NinjaDBG/releases/latest" class="btn btn-download" target="_blank">
+ Download
+ </a>
+ </div>
+ </nav>
+
+ <!-- ===== Hero ===== -->
+ <div class="hero">
+ <div class="badge">
+ <span class="dot"></span>
+ v1.1.3 — Now Open Source (Apache-2.0)
+ </div>
+ <h1>NinjaDBG <span class="ninja"></span></h1>
+ <p class="tagline">
+ A <strong>stealth-aware native debugger</strong> for Linux x86-64,
+ with experimental Windows & macOS support. Anti-detect at the
+ <strong>userland</strong> and <strong>kernel</strong> level.
+ Decompilation via RetDec. Scripting via Lua & Python.
+ </p>
+ <div class="actions">
+ <a href="https://github.com/ChapzoMods/NinjaDBG/releases/latest" class="btn-big btn-primary" target="_blank">
+ Download v1.1.3
+ </a>
+ <a href="https://github.com/ChapzoMods/NinjaDBG" class="btn-big btn-secondary" target="_blank">
+ View Source
+ </a>
+ </div>
+ <div class="stats">
+ <div class="stat">
+ <div class="num">9,400+</div>
+ <div class="label">Lines of C++</div>
+ </div>
+ <div class="stat">
+ <div class="num">14</div>
+ <div class="label">Modules</div>
+ </div>
+ <div class="stat">
+ <div class="num">16</div>
+ <div class="label">Anti-Detect Techniques</div>
+ </div>
+ <div class="stat">
+ <div class="num">5</div>
+ <div class="label">Languages (pretty print)</div>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== Features ===== -->
+ <section id="features">
+ <h2>Everything you need to <span class="accent">debug stealthily</span></h2>
+ <p class="subtitle">From low-level ptrace control to high-level decompilation — all in one tool.</p>
+ <div class="features">
+ <div class="feature-card">
+ <div class="icon"></div>
+ <h3>Anti-Detect Stealth</h3>
+ <p>8 userland + 8 kernel-level techniques to hide from anti-debug checks.
+ Mask <code>TracerPid</code>, hide <code>0xCC</code> bytes, spoof parent names,
+ intercept <code>PTRACE_TRACEME</code>, and more.</p>
+ <span class="tag">16 techniques</span>
+ </div>
+ <div class="feature-card">
+ <div class="icon"></div>
+ <h3>Native C Decompilation</h3>
+ <p>Decompile functions in <strong>live processes</strong> or static binaries
+ via Avast RetDec (native dlopen) or angr. Decompile at current RIP
+ with one command.</p>
+ <span class="tag">RetDec + angr</span>
+ </div>
+ <div class="feature-card">
+ <div class="icon"></div>
+ <h3>Lua + Python Scripting</h3>
+ <p>Automate debugging with full <code>ndbg</code> API in both Lua and Python.
+ JSON-RPC subprocess bridge — no library dependencies, full isolation.</p>
+ <span class="tag">JSON-RPC</span>
+ </div>
+ <div class="feature-card">
+ <div class="icon"></div>
+ <h3>Pretty Printers</h3>
+ <p>Interpret raw memory as language-specific types: C strings,
+ <code>std::string</code> (SSO-aware), Rust <code>String</code>,
+ Go <code>string</code>, CPython <code>str</code>, and structs.</p>
+ <span class="tag new">NEW v1.1.3</span>
+ </div>
+ <div class="feature-card">
+ <div class="icon"></div>
+ <h3>CLI-only (GUI removed in v1.1.3)</h3>
+ <p>Full-featured CLI REPL (the only interface; GUI was removed in v1.1.3)
+ 30+ commands, batch mode, interactive
+ TUI memory editor.</p>
+ <span class="tag">CLI + GUI</span>
+ </div>
+ <div class="feature-card">
+ <div class="icon"></div>
+ <h3>Binary Patching</h3>
+ <p>Patch ELF/PE/Mach-O binaries in-place: NOP, JMP always/never,
+ CALL→NOP, force-return-true, ASCII replace. Undo any patch. Save
+ without overwriting source.</p>
+ <span class="tag">7 patch kinds</span>
+ </div>
+ <div class="feature-card">
+ <div class="icon"></div>
+ <h3>Cross-Platform</h3>
+ <p>Debug Linux ELF (native ptrace), Windows PE (via Wine + gdbstub),
+ and macOS Mach-O (via QEMU). Auto-detects target platform from
+ magic bytes.</p>
+ <span class="tag">Linux + Win + Mac</span>
+ </div>
+ <div class="feature-card">
+ <div class="icon"></div>
+ <h3>Advanced Debugging</h3>
+ <p>Conditional + temporary breakpoints, hardware watchpoints (DR0-DR3),
+ step-over, step-out, syscall stepping, backtrace with symbol resolution.</p>
+ <span class="tag">Full feature set</span>
+ </div>
+ <div class="feature-card">
+ <div class="icon"></div>
+ <h3>Open Source (Apache-2.0)</h3>
+ <p>Full source code available. Free for personal, academic, and commercial
+ use. Fork it, modify it, contribute back. No restrictions.</p>
+ <span class="tag new">NEW v1.1.3</span>
+ </div>
+ </div>
+ </section>
+
+ <!-- ===== Anti-Detect ===== -->
+ <section id="antidetect">
+ <h2>16 <span class="accent">anti-detect</span> techniques</h2>
+ <p class="subtitle">Hide from every common anti-debug check — at both userland and kernel level.</p>
+ <div class="table-wrapper">
+ <table>
+ <thead>
+ <tr>
+ <th>#</th>
+ <th>Technique</th>
+ <th>Defeats</th>
+ <th>Layer</th>
+ </tr>
+ </thead>
+ <tbody>
+ <tr><td>1</td><td>Hardware Breakpoints (DR0-DR3)</td><td>INT3 byte scans of <code>.text</code></td><td>Userland</td></tr>
+ <tr><td>2</td><td><code>process_vm_readv/writev</code></td><td>ptrace-event observation</td><td>Userland</td></tr>
+ <tr><td>3</td><td>Mask <code>/proc/self/status</code></td><td><code>TracerPid:</code> field read</td><td>Userland</td></tr>
+ <tr><td>4</td><td>Hide NinjaDBG mmaps</td><td>Address-space enumeration</td><td>Userland</td></tr>
+ <tr><td>5</td><td>Timing normalization</td><td>RDTSC / clock_gettime checks</td><td>Userland</td></tr>
+ <tr><td>6</td><td>Parent name masquerade</td><td><code>/proc/ppid/comm</code> inspection</td><td>Userland</td></tr>
+ <tr><td>7</td><td>Hide from ps</td><td><code>readdir(/proc)</code> enumeration</td><td>Userland</td></tr>
+ <tr><td>8</td><td>INT3 scan bypass</td><td>Self-<code>.text</code> scanning for <code>0xCC</code></td><td>Userland</td></tr>
+ <tr><td>9</td><td>Hide PID from /proc</td><td>Kernel <code>proc_readdir()</code> hook</td><td>Kernel (LKM)</td></tr>
+ <tr><td>10</td><td>Mask <code>/proc/self/wchan</code></td><td>wchan returning <code>ptrace_stop</code></td><td>Kernel (LKM)</td></tr>
+ <tr><td>11</td><td>Mask <code>/proc/self/syscall</code></td><td>Syscall field showing stopped nr</td><td>Kernel (LKM)</td></tr>
+ <tr><td>12</td><td>Mask <code>/proc/&lt;pid&gt;/comm</code></td><td>comm field reading <code>ninjadb</code></td><td>Kernel (LKM)</td></tr>
+ <tr><td>13</td><td>Suppress tracer SIGCHLD</td><td>Timing via extra SIGCHLD</td><td>Kernel (LKM)</td></tr>
+ <tr><td>14</td><td>Force PR_SET_DUMPABLE=1</td><td><code>prctl(PR_GET_DUMPABLE)</code> returning 0</td><td>Kernel (LKM)</td></tr>
+ <tr><td>15</td><td>Intercept PTRACE_TRACEME</td><td>Target's self-TRACEME succeeding</td><td>Kernel (LKM)</td></tr>
+ <tr><td>16</td><td>Hide our mmap regions</td><td>Target enumerating <code>/proc/&lt;pid&gt;/maps</code></td><td>Kernel (LKM)</td></tr>
+ </tbody>
+ </table>
+ </div>
+ </section>
+
+ <!-- ===== Decompilation ===== -->
+ <section id="decompilation">
+ <h2>Decompile to <span class="accent">C source</span></h2>
+ <p class="subtitle">Wrap RetDec natively or use angr — decompile live processes or static binaries.</p>
+ <div class="code-section">
+ <div class="code-header">
+ <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+ <span class="title">ninjadb</span>
+ </div>
+ <div class="code-block">
+<span class="prompt">(ninjadb)</span> <span class="fn">decomp</span> <span class="var">set</span> <span class="string">angr</span>
+<span class="prompt">(ninjadb)</span> <span class="fn">decomp</span> <span class="var">file</span> <span class="string">/tmp/test_factorial</span> <span class="number">0x401139</span>
+<span class="comment">Decompiling function at 0x0000000000401139 in /tmp/test_factorial ...</span>
+<span class="comment">Backend: angr Elapsed: 1896 ms</span>
+<span class="comment">Function: sub_0x401139</span>
+
+<span class="comment">---- function factorial at 0x401139 ----</span>
+<span class="keyword">int</span> <span class="fn">factorial</span>(<span class="keyword">int</span> a0)
+{
+ <span class="keyword">return</span> (a0 &lt;= <span class="number">1</span> ? <span class="number">1</span> : a0 * <span class="fn">factorial</span>(a0 - <span class="number">1</span>));
+}
+ </div>
+ </div>
+ <p style="text-align:center;color:var(--text-dim);margin-top:1rem;">
+ Verified working — angr <code>func.normalize()</code> fix applied in v1.1.3
+ </p>
+ </section>
+
+ <!-- ===== Pretty Printers ===== -->
+ <section id="pretty">
+ <h2>Pretty Printers per <span class="accent">language</span></h2>
+ <p class="subtitle">Interpret raw memory as language-native types — no more hex dumps.</p>
+ <div class="languages">
+ <div class="lang-badge">
+ <div class="name">C</div>
+ <div class="types">char*, structs</div>
+ </div>
+ <div class="lang-badge">
+ <div class="name">C++</div>
+ <div class="types">std::string (SSO)</div>
+ </div>
+ <div class="lang-badge">
+ <div class="name">Rust</div>
+ <div class="types">String, &str</div>
+ </div>
+ <div class="lang-badge">
+ <div class="name">Go</div>
+ <div class="types">string, slices</div>
+ </div>
+ <div class="lang-badge">
+ <div class="name">Python</div>
+ <div class="types">PyUnicodeObject</div>
+ </div>
+ </div>
+ <div class="code-section" style="margin-top:2rem;">
+ <div class="code-header">
+ <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+ <span class="title">pretty print examples</span>
+ </div>
+ <div class="code-block">
+<span class="prompt">(ninjadb)</span> <span class="fn">pretty</span> <span class="var">set</span> <span class="string">cpp</span>
+<span class="prompt">(ninjadb)</span> <span class="fn">pretty</span> <span class="var">cpp_string</span> <span class="number">0x7ffe1000</span>
+<span class="accent">(std::string) 0x7ffe1000 = "Hello, world!" (len=13, SSO, data=0x7ffe1010)</span>
+
+<span class="prompt">(ninjadb)</span> <span class="fn">pretty</span> <span class="var">rust_string</span> <span class="number">0x7ffe2000</span>
+<span class="accent">(String) 0x7ffe2000 = "Hello, world!" (len=13, cap=13, ptr=0x55aabbccdd00)</span>
+
+<span class="prompt">(ninjadb)</span> <span class="fn">pretty</span> <span class="var">struct</span> <span class="number">0x7ffe3000</span> <span class="string">i32,str,ptr,u64</span>
+<span class="accent">struct at 0x7ffe3000:</span>
+ +0x0 i32 = 42 (0x2a)
+ +0x8 ptr = 0x401234 -> "hello world"
+ +0x10 ptr = 0x7ffe5678
+ +0x18 u64 = 139832 (0x22238)
+ </div>
+ </div>
+ </section>
+
+ <!-- ===== Comparison ===== -->
+ <section>
+ <h2>Why <span class="accent">NinjaDBG</span>?</h2>
+ <p class="subtitle">What you get with NinjaDBG vs. traditional debuggers.</p>
+ <div class="compare-grid">
+ <div class="compare-col yes">
+ <h3> With NinjaDBG</h3>
+ <div class="item"><span class="icon"></span><span>16 anti-detect techniques (userland + kernel)</span></div>
+ <div class="item"><span class="icon"></span><span>Native C decompilation (RetDec + angr)</span></div>
+ <div class="item"><span class="icon"></span><span>Lua + Python scripting</span></div>
+ <div class="item"><span class="icon"></span><span>Pretty printers for 5 languages</span></div>
+ <div class="item"><span class="icon"></span><span>Binary patching (ELF/PE/Mach-O)</span></div>
+ <div class="item"><span class="icon"></span><span>Cross-platform (Linux/Win/Mac)</span></div>
+ <div class="item"><span class="icon"></span><span>Interactive TUI memory editor</span></div>
+ <div class="item"><span class="icon"></span><span>Open Source (Apache-2.0)</span></div>
+ </div>
+ <div class="compare-col no">
+ <h3> Traditional debuggers (gdb, lldb)</h3>
+ <div class="item"><span class="icon"></span><span>No anti-detect — easily spotted by targets</span></div>
+ <div class="item"><span class="icon"></span><span>No built-in decompilation</span></div>
+ <div class="item"><span class="icon"></span><span>Scripting limited to Python (gdb) or Lua (lldb)</span></div>
+ <div class="item"><span class="icon"></span><span>No language-aware pretty printers</span></div>
+ <div class="item"><span class="icon"></span><span>No binary patching</span></div>
+ <div class="item"><span class="icon"></span><span>Platform-locked (gdb=Linux, lldb=Mac)</span></div>
+ <div class="item"><span class="icon"></span><span>No interactive memory editor</span></div>
+ <div class="item"><span class="icon"></span><span>GPL license (gdb) — restrictive for commercial use</span></div>
+ </div>
+ </div>
+ </section>
+
+ <!-- ===== Install ===== -->
+ <section id="install">
+ <h2>Get started in <span class="accent">30 seconds</span></h2>
+ <p class="subtitle">Download the prebuilt binary or build from source.</p>
+ <div class="code-section">
+ <div class="code-header">
+ <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+ <span class="title">quick start</span>
+ </div>
+ <div class="code-block">
+<span class="comment"># Option 1: Download prebuilt binary</span>
+<span class="fn">wget</span> https://github.com/ChapzoMods/NinjaDBG/releases/latest/download/ninjadb
+<span class="fn">chmod</span> +x ninjadb
+<span class="fn">./ninjadb</span> --cli
+
+<span class="comment"># Option 2: Build from source</span>
+<span class="fn">git</span> clone https://github.com/ChapzoMods/NinjaDBG.git
+<span class="fn">cd</span> NinjaDBG
+<span class="fn">make</span> -j4
+<span class="fn">./build/ninjadb</span> --cli
+
+<span class="comment"># Headless CLI (recommended for production)</span>
+<span class="fn">./ninjadb</span> --cli --no-eula-check -c <span class="string">"attach 12345; disas; decomp; quit"</span>
+ </div>
+ </div>
+ </section>
+
+ <!-- ===== CTA ===== -->
+ <div class="cta-section">
+ <h2>Ready to debug <span class="accent">stealthily</span>?</h2>
+ <p>Star the repo, download v1.1.3, and start debugging like a ninja.</p>
+ <div class="actions" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;">
+ <a href="https://github.com/ChapzoMods/NinjaDBG" class="btn-big btn-primary" target="_blank">
+ Star on GitHub
+ </a>
+ <a href="https://github.com/ChapzoMods/NinjaDBG/releases/latest" class="btn-big btn-secondary" target="_blank">
+ Download v1.1.3
+ </a>
+ </div>
+ </div>
+
+ <!-- ===== Footer ===== -->
+ <footer>
+ <div class="logo">
+ <img src="ninja_logo.png" alt="NinjaDBG">
+ NinjaDBG
+ </div>
+ <p>Stealth-Aware Native Debugger · Open Source (Apache-2.0) · v1.1.3</p>
+ <div class="links">
+ <a href="https://github.com/ChapzoMods/NinjaDBG">GitHub</a>
+ <a href="https://github.com/ChapzoMods/NinjaDBG/releases">Releases</a>
+ <a href="https://github.com/ChapzoMods/NinjaDBG/blob/main/README.md">Documentation</a>
+ <a href="https://github.com/ChapzoMods/NinjaDBG/issues">Issues</a>
+ <a href="https://github.com/ChapzoMods/NinjaDBG/blob/main/LICENSE">License</a>
+ </div>
+ <div class="copyright">
+ © 2026 Chapzoo (ChapzoMods). Apache License 2.0.<br>
+ Stay stealthy. 
+ </div>
+ </footer>
+</body>
+</html>
