@@ -1,5 +1,5 @@
 // NinjaDBG v1.1.0 - Binary Patcher
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 //
 // Allows in-place patching of binary files (ELF / PE / Mach-O) without
 // needing to attach a debugger. Useful for:

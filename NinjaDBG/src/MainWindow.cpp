@@ -1,5 +1,5 @@
 // NinjaDBG v1.0.2 - MainWindow implementation (part 1: init, event loop, helpers)
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 #include "MainWindow.h"
 #include "UITheme.h"
 #include <X11/keysym.h>
@@ -101,7 +101,7 @@ bool MainWindow::init(int w, int h) {
     // Enable anti-detect defaults
     log("NinjaDBG v1.0.2 initialized", "info");
     log("Stealth subsystem online — 6 techniques active", "ok");
-    log("Open Source (MIT) - Created by Chapzoo", "info");
+    log("Open Source (Apache-2.0) - Created by Chapzoo", "info");
     log("Click [Attach] to debug a running process, or [Launch] to start a new target.", "info");
 
     return true;
@@ -653,7 +653,7 @@ void MainWindow::actionKill() {
 }
 void MainWindow::actionAbout() {
     modal_ = Modal::About;
-    log("About: NinjaDBG v1.1.0 — Open Source (MIT), by Chapzoo", "info");
+    log("About: NinjaDBG v1.1.0 — Open Source (Apache-2.0), by Chapzoo", "info");
     invalidate();
 }
 

@@ -1,5 +1,5 @@
 // NinjaDBG v1.1.0 - HeadlessCLI implementation
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 #include "HeadlessCLI.h"
 #include "WelcomeScreen.h"
 #include "InteractiveMemoryEditor.h"
@@ -35,7 +35,7 @@ void HeadlessCLI::printBanner() {
         " | |\\  | | |_| | | | (_| | | | |_| |\\___ \\ \n"
         " |_| \\_|_|\\__|_| |_|\\__,_|_|  \\___/|____) |\n"
         "\n"
-        "  v1.1.0 — Stealth Debugger  (Open Source (MIT) - by Chapzoo)\n"
+        "  v1.1.0 — Stealth Debugger  (Open Source (Apache-2.0) - by Chapzoo)\n"
         "  Headless CLI mode. Type 'help' for command list, 'quit' to exit.\n"
         "  New in v1.1.0: decomp (native C decompilation via RetDec/angr)\n"
         "\n";

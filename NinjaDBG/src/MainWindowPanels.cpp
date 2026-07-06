@@ -1,5 +1,5 @@
 // NinjaDBG v1.0.2 - MainWindow implementation (part 2: painting & panels)
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 #include "MainWindow.h"
 #include "UITheme.h"
 #include <sstream>
@@ -529,8 +529,8 @@ void MainWindow::paintStatusBar(LayoutRect r) {
     drawText(icon + "  " + status_, r.x + 12, r.y + 8, sc, font::Sans, 12);
 
     // Right side: PID + State + Anti-detect (compact, fits the panel)
-    // Right-aligned, with "Open Source (MIT) - by Chapzoo" at the very right
-    std::string author = "Open Source (MIT) - by Chapzoo";
+    // Right-aligned, with "Open Source (Apache-2.0) - by Chapzoo" at the very right
+    std::string author = "Open Source (Apache-2.0) - by Chapzoo";
     int author_w = textWidth(author, font::Sans, 11);
     int author_x = r.x + r.w - author_w - 12;
     drawText(author, author_x, r.y + 9, col::Text_Muted, font::Sans, 11);
@@ -922,7 +922,7 @@ void MainWindow::paintAboutModal() {
 
     // License / Author
     int ly = vy + 28;
-    std::string lic = "Open Source (MIT)  -  Free for all uses";
+    std::string lic = "Open Source (Apache-2.0)  -  Free for all uses";
     int lw = textWidth(lic, font::Sans, 12);
     drawText(lic, r.x + (r.w - lw) / 2, ly, col::Text_Dim, font::Sans, 12);
     ly += 22;

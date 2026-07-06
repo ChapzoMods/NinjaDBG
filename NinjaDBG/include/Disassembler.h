@@ -1,5 +1,5 @@
 // NinjaDBG v1.1.0 - Standalone x86-64 Disassembler
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 //
 // A from-scratch length-disassembler + mnemonic decoder for x86-64.
 // Covers legacy + SSE + AVX prefixes, REX, VEX, ModR/M, SIB, displacements,

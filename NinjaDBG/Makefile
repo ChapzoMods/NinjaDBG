@@ -1,5 +1,5 @@
 # NinjaDBG v1.1.0 - Build System
-# Open Source (MIT) - by Chapzoo
+# Open Source (Apache-2.0) - by Chapzoo
 CXX      := g++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-unused-but-set-variable \
 	    -Iinclude -Isrc \

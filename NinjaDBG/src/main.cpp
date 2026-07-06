@@ -1,5 +1,5 @@
 // NinjaDBG v1.1.0 - Entry point
-// Open Source - MIT License - by Chapzoo
+// Open Source - Apache-2.0 - by Chapzoo
 //
 // Mode selection:
 //   ninjadb              → GUI (experimental) — default
@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
     if (show_help) {
         std::cout <<
             "NinjaDBG v1.1.0 — Stealth Debugger\n"
-            "Open Source (MIT License) - Created by Chapzoo\n\n"
+            "Open Source (Apache-2.0) - Created by Chapzoo\n\n"
             "Usage:\n"
             "  ninjadb                  Launch GUI (EXPERIMENTAL — under development)\n"
             "  ninjadb --cli            Headless CLI mode (recommended for production)\n"
@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
 
     // GUI mode (experimental)
     std::cout << "NinjaDBG v1.1.0 - Stealth Debugger" << std::endl;
-    std::cout << "Open Source (MIT License) - Created by Chapzoo" << std::endl;
+    std::cout << "Open Source (Apache-2.0) - Created by Chapzoo" << std::endl;
     std::cout << std::endl;
     std::cout << "*** NOTE: The GUI is EXPERIMENTAL and still under active development. ***" << std::endl;
     std::cout << "*** For production use, run:  ninjadb --cli                              ***" << std::endl;
@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
     }
     w.setStatus("Ready - click [Attach] to debug a process  -  GUI is EXPERIMENTAL");
     w.log("GUI is EXPERIMENTAL — for full features use: ninjadb --cli", "warn");
-    w.log("v1.1.0: bug fixes, pretty printers, Open Source (MIT)", "info");
+    w.log("v1.1.0: bug fixes, pretty printers, Open Source (Apache-2.0)", "info");
     w.run();
     return 0;
 }

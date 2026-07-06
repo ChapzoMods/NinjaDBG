@@ -1,5 +1,5 @@
 // NinjaDBG v1.1.0 - Headless CLI
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 //
 // Full-featured command-line interface to NinjaDBG. Designed for:
 //   - Scripted / automated debugging (CI, malware analysis pipelines)

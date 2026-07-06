@@ -1,5 +1,5 @@
 // NinjaDBG v1.0.2 - Debugger Core (ptrace-based)
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 #pragma once
 
 #include "Types.h"

@@ -1,5 +1,5 @@
 // NinjaDBG v1.1.0 - Script Engine (Lua + Python)
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 //
 // Allows users to script NinjaDBG via either Lua or Python. The engine
 // exposes a NinjaDBG API to the script with functions like:

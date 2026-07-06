@@ -1,5 +1,5 @@
 // NinjaDBG v1.0.2 - DebuggerCore implementation
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 #include "DebuggerCore.h"
 #include "AntiDetect.h"
 #include <sys/ptrace.h>

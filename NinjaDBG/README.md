@@ -8,24 +8,24 @@
 
 [![GitHub stars](https://img.shields.io/github/stars/ChapzoMods/NinjaDBG?style=social)](https://github.com/ChapzoMods/NinjaDBG/stargazers)
 [![GitHub release](https://img.shields.io/github/v/release/ChapzoMods/NinjaDBG?color=00ffe1)](https://github.com/ChapzoMods/NinjaDBG/releases/latest)
-[![License: MIT](https://img.shields.io/badge/License-MIT-00ffe1.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-00ffe1.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20x86--64-252a40)](https://github.com/ChapzoMods/NinjaDBG)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-00599c)](https://isocpp.org/)
 [![Lines of Code](https://img.shields.io/badge/LOC-9400%2B-00ffe1)](https://github.com/ChapzoMods/NinjaDBG)
 
-**Version 1.1.0** · Open Source (MIT License) · Created by **Chapzoo**
+**Version 1.1.0** · Open Source (Apache-2.0) · Created by **Chapzoo**
 
 🌐 **[Live Demo & Docs](https://chapzomods.github.io/NinjaDBG/)** · 📦 **[Download](https://github.com/ChapzoMods/NinjaDBG/releases/latest)** · ⭐ **[Star](https://github.com/ChapzoMods/NinjaDBG/stargazers)**
 
 [Features](#-features) · [Headless CLI](#-headless-cli) · [Pretty Printers](#-pretty-printers) · [Decompilation](#-decompilation) · [Scripting](#-scripting--lua--python) · [License](#-license)
 
-> 🎉 **v1.1.0: Now Open Source under MIT License!**
+> 🎉 **v1.1.0: Now Open Source under Apache License 2.0!**
 >
 > Previous versions (1.0.0–1.0.5) were Closed Source. Starting from v1.1.0,
-> NinjaDBG is fully open source under MIT. See [LICENSE](LICENSE).
+> NinjaDBG is fully open source under Apache-2.0. See [LICENSE](LICENSE).
 >
 > 🆕 **New in v1.1.0**: 5 bug fixes, pretty printers (C/C++/Rust/Go/Python),
-> 9 HIGH-severity code fixes from exhaustive review, MIT license switch.
+> 9 HIGH-severity code fixes from exhaustive review, Apache-2.0 license switch.
 
 </div>
 
@@ -45,7 +45,7 @@ If NinjaDBG helps you, please give it a star — it helps others discover it!
 
 ## 📖 Overview
 
-**NinjaDBG** is an open-source (MIT) native C++17 debugger for Linux x86-64
+**NinjaDBG** is an open-source (Apache-2.0) native C++17 debugger for Linux x86-64
 with experimental cross-platform support for Windows (PE) and macOS (Mach-O)
 binaries via Wine and QEMU adapters. It is engineered around one principle:
 **silence**. Where conventional debuggers leave obvious traces — INT3 bytes
@@ -63,7 +63,7 @@ believes it is running alone.
   4. `script run python` now properly registers the `ndbg` module in `sys.modules` so `import ndbg` works
   5. `decomp file <bin> <addr>` with angr now calls `func.normalize()` before decompilation — fixes `ValueError: Decompilation must work on normalized function graphs`
 - **🎨 Pretty Printers** per language (C, C++, Rust, Go, Python) — see [§ Pretty Printers](#-pretty-printers)
-- **🔓 Switched from Closed Source to Open Source (MIT License)**
+- **🔓 Switched from Closed Source to Open Source (Apache-2.0)**
 - **🔍 Code review**: 9 HIGH-severity bugs fixed (memory corruption in `writeMemory`, `kill()` no-op on modern Linux, Cairo destructor UB, disassembler buffer overflow, segment-override OOB read, JmpAlways off-by-one, PE bounds check, attach leak, findFunctionStart underflow)
 
 ---
@@ -310,7 +310,7 @@ code (`include/AntiDetect.h`, `include/KernelStealth.h`).
 ```
 NinjaDBG/
 ├── Makefile
-├── LICENSE                     MIT License (NEW v1.1.0)
+├── LICENSE                     Apache License 2.0 (NEW v1.1.0)
 ├── README.md
 ├── resources/
 │   ├── ninja_logo.png
@@ -329,7 +329,7 @@ NinjaDBG/
 │   ├── Decompiler.h            RetDec + angr wrapper
 │   ├── PrettyPrinter.h         [NEW v1.1.0] C/C++/Rust/Go/Python printers
 │   ├── HeadlessCLI.h           CLI REPL
-│   ├── WelcomeScreen.h         MIT license flow
+│   ├── WelcomeScreen.h         Apache-2.0 license flow
 │   ├── UITheme.h
 │   └── MainWindow.h            X11+Cairo GUI (experimental)
 ├── src/
@@ -345,7 +345,7 @@ NinjaDBG/
 │   ├── Decompiler.cpp          (fixed: angr func.normalize())
 │   ├── PrettyPrinter.cpp       [NEW v1.1.0]
 │   ├── HeadlessCLI.cpp         (fixed: info b, patch undo, --no-eula-check)
-│   ├── WelcomeScreen.cpp       (rewritten: MIT license)
+│   ├── WelcomeScreen.cpp       (rewritten: Apache-2.0 license)
 │   ├── MainWindow.cpp          (fixed: Cairo destructor order)
 │   └── MainWindowPanels.cpp    (fixed: disassemble buffer overflow)
 └── scripts/
@@ -403,12 +403,12 @@ make -j4
 
 ## ⚖️ License
 
-**NinjaDBG v1.1.0 is Open Source under the MIT License.**
+**NinjaDBG v1.1.0 is Open Source under the Apache License 2.0.**
 
 See [LICENSE](LICENSE) for the full text.
 
 Previous versions (1.0.0 – 1.0.5) were Closed Source. Starting from
-v1.1.0, the full source code is available under MIT. You are free to
+v1.1.0, the full source code is available under Apache-2.0. You are free to
 use, modify, distribute, and sublicense the code.
 
 ---
@@ -418,7 +418,7 @@ use, modify, distribute, and sublicense the code.
 | Version | Target | Status |
 |---------|--------|--------|
 | 1.0.0–1.0.5 | Core debugger + CLI + decompiler + scripting (Closed Source) | ✅ Released |
-| **1.1.0** | **Bug fixes, pretty printers, Open Source (MIT)** | ✅ **Released (this)** |
+| **1.1.0** | **Bug fixes, pretty printers, Open Source (Apache-2.0)** | ✅ **Released (this)** |
 | 1.2.0 | Capstone integration for full x86-64 / ARM64 disassembly | 🔜 Planned |
 | 1.3.0 | Remote debugging over TCP (gdbserver-style) | 🔜 Planned |
 | 1.4.0 | Multi-process debugging with tabbed UI | 🔜 Planned |
@@ -452,7 +452,7 @@ Please report bugs via GitHub Issues.
 
 <div align="center">
 
-**NinjaDBG v1.1.0** · Open Source (MIT) · by **Chapzoo**
+**NinjaDBG v1.1.0** · Open Source (Apache-2.0) · by **Chapzoo**
 
 *Stay stealthy.* 🥷
 

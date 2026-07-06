@@ -1,5 +1,5 @@
 // NinjaDBG v1.0.2 - Common Types & Constants
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 #pragma once
 
 #include <cstdint>

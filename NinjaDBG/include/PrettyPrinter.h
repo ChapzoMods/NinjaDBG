@@ -1,5 +1,5 @@
 // NinjaDBG v1.1.0 - Pretty Printers by Language
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 //
 // Provides language-aware pretty printing of in-memory values. When
 // debugging a program written in C, C++, Rust, Go, or Python, the

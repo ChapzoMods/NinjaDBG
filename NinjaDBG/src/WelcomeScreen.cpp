@@ -48,13 +48,13 @@ std::string WelcomeScreen::welcomeMessage() {
     return R"WELCOME(
 Welcome to NinjaDBG v1.1.0 — Stealth Debugger
 
-NinjaDBG is an OPEN SOURCE (MIT License) native debugger for Linux x86-64
+NinjaDBG is an OPEN SOURCE (Apache-2.0) native debugger for Linux x86-64
 with experimental support for Windows (PE) and macOS (Mach-O) binaries.
 
 This release adds:
   - Bug fixes: info b, patch undo, --no-eula-check, script run python, decomp angr
   - Pretty Printers per language (C, C++, Rust, Go, Python)
-  - Switched from Closed Source to Open Source (MIT License)
+  - Switched from Closed Source to Open Source (Apache-2.0)
 
 Full feature list:
   - Headless CLI mode (recommended for production)
@@ -77,33 +77,42 @@ development. For production use, prefer the headless CLI (run `ninjadb --cli`).
 std::string WelcomeScreen::eulaText() {
     return R"EULA(
 ==========================================================================
-   NinjaDBG v1.1.0 — MIT License (Open Source)
+   NinjaDBG v1.1.0 — Apache License 2.0 (Open Source)
 ==========================================================================
 
-MIT License
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
 
-Copyright (c) 2026 Chapzoo (ChapzoMods)
+Copyright 2026 Chapzoo (ChapzoMods)
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+KEY TERMS (summary — see full License at http://www.apache.org/licenses/):
+
+  - You are free to use, copy, modify, merge, publish, distribute,
+    sublicense, and sell copies of the Software.
+  - You must include the copyright notice and a copy of this License
+    in all copies or substantial portions of the Software.
+  - You must state any significant changes you made to the files.
+  - If you institute patent litigation alleging the Software infringes
+    a patent, your patent license terminates.
+  - The Software is provided "AS IS" without warranties of any kind.
+  - The Author is not liable for any damages arising from use of the
+    Software.
 
 ==========================================================================
-   Additional notes (not part of the MIT license)
+   Additional notes (not part of the Apache License)
 ==========================================================================
 
 1. ANTI-DEBUG / STEALTH FEATURES
@@ -152,7 +161,7 @@ SOFTWARE.
    OF THE POSSIBILITY OF SUCH DAMAGES.
 
 ==========================================================================
-   By using NinjaDBG you accept the MIT License terms above.
+   By using NinjaDBG you accept the Apache License 2.0 terms above.
    Press 'y' to accept, or any other key to decline.
 ==========================================================================
 )EULA";

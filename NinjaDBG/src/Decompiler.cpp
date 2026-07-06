@@ -1,5 +1,5 @@
 // NinjaDBG v1.1.0 - Decompiler implementation (RetDec / angr backend)
-// Open Source (MIT) - by Chapzoo
+// Open Source (Apache-2.0) - by Chapzoo
 #include "Decompiler.h"
 #include <iostream>
 #include <fstream>
