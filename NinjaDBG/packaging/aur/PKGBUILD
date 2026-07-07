@@ -1,9 +1,9 @@
 # Maintainer: Chapzoo <ChapzoMods@users.noreply.github.com>
-# NinjaDBG v1.1.3 - Stealth-Aware Native Debugger
+# NinjaDBG v1.1.4 - Stealth-Aware Native Debugger
 # AUR package: https://aur.archlinux.org/packages/ninjadb
 
 pkgname=ninjadb
-pkgver=1.1.2
+pkgver=1.1.4
 pkgrel=1
 pkgdesc="Stealth-Aware Native Debugger for Linux x86-64 (CLI-only, Apache-2.0)"
 arch=('x86_64')

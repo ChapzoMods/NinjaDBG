@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.3 - WelcomeScreen implementation
+// NinjaDBG v1.1.4 - WelcomeScreen implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "WelcomeScreen.h"
 #include <fstream>
@@ -30,7 +30,7 @@ bool WelcomeScreen::isEulaAccepted() {
     if (!f.good()) return false;
     std::string line;
     std::getline(f, line);
-    return line == "1.1.3";
+    return line == "1.1.4";
 }
 
 bool WelcomeScreen::acceptEula() {
@@ -39,14 +39,14 @@ bool WelcomeScreen::acceptEula() {
     std::system(cmd.c_str());
     std::ofstream f(eulaPath());
     if (!f) return false;
-    f << "1.1.3\n";
+    f << "1.1.4\n";
     f.close();
     return true;
 }
 
 std::string WelcomeScreen::welcomeMessage() {
     return R"WELCOME(
-Welcome to NinjaDBG v1.1.3 — Stealth Debugger
+Welcome to NinjaDBG v1.1.4 — Stealth Debugger
 
 NinjaDBG is an OPEN SOURCE (Apache-2.0) native debugger for Linux x86-64
 with experimental support for Windows (PE) and macOS (Mach-O) binaries.
@@ -69,7 +69,7 @@ Full feature list:
   - Pretty printers: C strings, std::string, Rust String, Go string, Python str, structs
   - Welcome screen + Apache-2.0 license
 
-IMPORTANT: NinjaDBG v1.1.3 is CLI-only. The GUI was removed in v1.1.3.
+IMPORTANT: NinjaDBG v1.1.4 is CLI-only. The GUI was removed in v1.1.4.
 For the full feature set, use the headless CLI (run `ninjadb`).
 )WELCOME";
 }
@@ -77,7 +77,7 @@ For the full feature set, use the headless CLI (run `ninjadb`).
 std::string WelcomeScreen::eulaText() {
     return R"EULA(
 ==========================================================================
-   NinjaDBG v1.1.3 — Apache License 2.0 (Open Source)
+   NinjaDBG v1.1.4 — Apache License 2.0 (Open Source)
 ==========================================================================
 
 Apache License
@@ -143,7 +143,7 @@ KEY TERMS (summary — see full License at http://www.apache.org/licenses/):
 
 3. CLI-ONLY
 
-   The GUI was removed in v1.1.3. NinjaDBG is now CLI-only.
+   The GUI was removed in v1.1.4. NinjaDBG is now CLI-only.
    All features are exposed via the headless CLI. For production
    use, the CLI is the recommended and only interface.
 

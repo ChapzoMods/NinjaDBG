@@ -35,7 +35,7 @@ request.
 
 ## 2. Build instructions
 
-NinjaDBG v1.1.3 has no GUI dependencies. The only required packages are
+NinjaDBG v1.1.4 has no GUI dependencies. The only required packages are
 `build-essential` and `pkg-config`:
 
 ```bash
@@ -106,7 +106,7 @@ template (replace the file name and description on the first line):
 For C++ files:
 
 ```cpp
-// NinjaDBG v1.1.3 - <one-line description>
+// NinjaDBG v1.1.4 - <one-line description>
 // Open Source (Apache-2.0) - by Chapzoo
 ```
 
@@ -114,7 +114,7 @@ For C files:
 
 ```c
 /*
- * NinjaDBG v1.1.3 - <one-line description>
+ * NinjaDBG v1.1.4 - <one-line description>
  * Open Source (Apache-2.0) - by Chapzoo
  */
 ```

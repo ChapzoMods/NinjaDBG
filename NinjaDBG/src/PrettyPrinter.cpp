@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.3 - PrettyPrinter implementation
+// NinjaDBG v1.1.4 - PrettyPrinter implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "PrettyPrinter.h"
 #include <sstream>
@@ -305,7 +305,7 @@ std::string PrettyPrinter::autoPrint(DebuggerCore& dbg, addr_t addr) {
 
 std::string PrettyPrinter::apiDocs() {
     return R"DOCS(
-NinjaDBG v1.1.3 Pretty Printers API
+NinjaDBG v1.1.4 Pretty Printers API
 ====================================
 
 Pretty printers interpret raw memory bytes as language-specific data

@@ -202,7 +202,7 @@
 
    ===================================================================
 
-   NinjaDBG v1.1.0 - Stealth-Aware Native Debugger
+   NinjaDBG v1.1.4 - Stealth-Aware Native Debugger
    https://github.com/ChapzoMods/NinjaDBG
 
    Additional notes (not part of the Apache License):
@@ -215,5 +215,5 @@
    - The optional kernel module (ninja_stealth.ko) is unsigned and may
      destabilize your system. Load it at your own risk.
 
-   - NinjaDBG is CLI-only. The GUI was removed in v1.1.1 and is no longer maintained.
+   - NinjaDBG is CLI-only. The GUI was removed in v1.1.1. maintained.
      For production use, use the headless CLI (`ninjadb`).

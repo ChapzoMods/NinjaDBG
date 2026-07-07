@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.3 - HeadlessCLI implementation
+// NinjaDBG v1.1.4 - HeadlessCLI implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "HeadlessCLI.h"
 #include "WelcomeScreen.h"
@@ -9,6 +9,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <cerrno>
+#include <cstdio>
+#include <map>
+#include <iomanip>
 #include <unistd.h>
 #include <termios.h>
 
@@ -36,9 +39,9 @@ void HeadlessCLI::printBanner() {
         " | |\\  | | |_| | | | (_| | | | |_| |\\___ \\ \n"
         " |_| \\_|_|\\__|_| |_|\\__,_|_|  \\___/|____) |\n"
         "\n"
-        "  v1.1.3 — Stealth Debugger  (Open Source (Apache-2.0) - by Chapzoo)\n"
+        "  v1.1.4 — Stealth Debugger  (Open Source (Apache-2.0) - by Chapzoo)\n"
         "  Headless CLI mode. Type 'help' for command list, 'quit' to exit.\n"
-        "  New in v1.1.3: decomp (native C decompilation via RetDec/angr)\n"
+        "  New in v1.1.4: decomp (native C decompilation via RetDec/angr)\n"
         "\n";
 }
 
@@ -159,6 +162,16 @@ void HeadlessCLI::execute(const std::string& line) {
         if (ms <= 0) { err("sleep: invalid duration"); return; }
         usleep(ms * 1000);
     }
+    // v1.1.4: x64dbg-like features
+    else if (cmd == "modules" || cmd == "mod") { cmdModules(args); }
+    else if (cmd == "handles") { cmdHandles(args); }
+    else if (cmd == "dump") { cmdDump(args); }
+    else if (cmd == "find" || cmd == "search") { cmdFind(args); }
+    else if (cmd == "findstr") { cmdFindStr(args); }
+    else if (cmd == "flags") { cmdFlags(args); }
+    else if (cmd == "setreg") { cmdSetReg(args); }
+    else if (cmd == "memmap") { cmdMemMap(args); }
+    else if (cmd == "trace") { cmdTrace(args); }
     else {
         err("Unknown command: " + cmd + " (type 'help')");
     }
@@ -804,6 +817,367 @@ void HeadlessCLI::cmdTarget(const std::vector<std::string>& args) {
     } else err("load failed: " + patcher_.lastError());
 }
 
+// ===== v1.1.4: x64dbg-like features =====
+
+void HeadlessCLI::cmdModules(const std::vector<std::string>& args) {
+    if (dbg_.pid() == 0) { err("Not attached"); return; }
+    auto maps = dbg_.readMaps();
+    // Group by path (each unique path = one module)
+    std::map<std::string, std::pair<addr_t, addr_t>> modules;
+    for (auto& m : maps) {
+        if (m.path.empty()) continue;
+        auto it = modules.find(m.path);
+        if (it == modules.end()) {
+            modules[m.path] = {m.start, m.end};
+        } else {
+            it->second.first = std::min(it->second.first, m.start);
+            it->second.second = std::max(it->second.second, m.end);
+        }
+    }
+    out("BASE               END                SIZE       MODULE");
+    out("------------------ ------------------ ---------- --------------------------------");
+    for (auto& kv : modules) {
+        size_t sz = kv.second.second - kv.second.first;
+        // Get basename
+        std::string bn = kv.first;
+        size_t slash = bn.rfind('/');
+        if (slash != std::string::npos) bn = bn.substr(slash + 1);
+        std::cout << hex(kv.second.first) << " " << hex(kv.second.second) << " "
+                  << std::setw(10) << std::hex << sz << " " << kv.first << std::endl;
+    }
+    out("\n" + std::to_string(modules.size()) + " modules loaded");
+}
+
+void HeadlessCLI::cmdHandles(const std::vector<std::string>& args) {
+    if (dbg_.pid() == 0) { err("Not attached"); return; }
+    // Linux: read /proc/<pid>/fd
+    std::string fd_path = "/proc/" + std::to_string(dbg_.pid()) + "/fd";
+    out("FD   TARGET");
+    out("---- --------------------------------------------------");
+    int count = 0;
+    std::string cmd = "ls -la " + fd_path + "/ 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (pipe) {
+        char buf[512];
+        while (fgets(buf, sizeof(buf), pipe)) {
+            // Parse ls -la output: skip "total" and "." and ".."
+            std::string line(buf);
+            if (line.empty() || line[0] == 't' || line.find(" -> ") == std::string::npos) continue;
+            size_t arrow = line.find(" -> ");
+            if (arrow == std::string::npos) continue;
+            // Extract fd number from the filename column
+            size_t fd_start = line.rfind(' ', arrow - 1);
+            if (fd_start == std::string::npos) continue;
+            std::string fd_str = line.substr(fd_start + 1, arrow - fd_start - 1);
+            std::string target = line.substr(arrow + 4);
+            // Trim trailing newline
+            if (!target.empty() && target.back() == '\n') target.pop_back();
+            std::cout << std::left << std::setw(5) << fd_str << " " << target << std::endl;
+            count++;
+        }
+        pclose(pipe);
+    }
+    out("\n" + std::to_string(count) + " handles open");
+}
+
+void HeadlessCLI::cmdDump(const std::vector<std::string>& args) {
+    if (dbg_.pid() == 0) { err("Not attached"); return; }
+    if (args.size() < 3) {
+        err("usage: dump <addr> <size> <filename>");
+        err("  Dumps <size> bytes from <addr> to <filename>");
+        return;
+    }
+    bool ok;
+    addr_t addr = parseAddr(args[0], &ok);
+    if (!ok) { err("bad address"); return; }
+    size_t size = (size_t)strtoull(args[1].c_str(), nullptr, 0);
+    if (size == 0 || size > 0x10000000) { err("invalid size (max 256MB)"); return; }
+
+    auto data = dbg_.readMemoryVec(addr, size);
+    if (data.empty()) { err("readMemory failed at " + hex(addr)); return; }
+
+    std::ofstream f(args[2], std::ios::binary);
+    if (!f) { err("cannot open file: " + args[2]); return; }
+    f.write((const char*)data.data(), data.size());
+    f.close();
+    out("Dumped " + std::to_string(data.size()) + " bytes from " + hex(addr) + " to " + args[2]);
+}
+
+void HeadlessCLI::cmdFind(const std::vector<std::string>& args) {
+    if (dbg_.pid() == 0) { err("Not attached"); return; }
+    if (args.size() < 3) {
+        err("usage: find <start_addr> <end_addr> <byte1> <byte2> [??] ...");
+        err("  Use ?? as wildcard for any byte");
+        err("  Example: find 0x400000 0x500000 48 89 E5 ?? C3");
+        return;
+    }
+    bool ok;
+    addr_t start = parseAddr(args[0], &ok);
+    if (!ok) { err("bad start address"); return; }
+    addr_t end = parseAddr(args[1], &ok);
+    if (!ok) { err("bad end address"); return; }
+    if (end <= start) { err("end must be > start"); return; }
+
+    // Parse pattern (supports ?? wildcards)
+    std::vector<std::pair<bool, u8>> pattern; // (is_wildcard, value)
+    for (size_t i = 2; i < args.size(); i++) {
+        if (args[i] == "??" || args[i] == "*") {
+            pattern.push_back({true, 0});
+        } else {
+            unsigned long val = strtoul(args[i].c_str(), nullptr, 0);
+            if (val > 0xFF) { err("byte value out of range: " + args[i]); return; }
+            pattern.push_back({false, (u8)val});
+        }
+    }
+    if (pattern.empty()) { err("no pattern specified"); return; }
+
+    // Read memory in chunks and search
+    size_t total_size = end - start;
+    size_t chunk_size = std::min((size_t)0x100000, total_size); // 1MB chunks
+    size_t found = 0;
+    size_t max_results = 1000;
+
+    for (addr_t base = start; base < end && found < max_results; base += chunk_size) {
+        size_t read_size = std::min(chunk_size + pattern.size(), end - base);
+        auto data = dbg_.readMemoryVec(base, read_size);
+        if (data.empty()) continue;
+
+        for (size_t i = 0; i + pattern.size() <= data.size() && found < max_results; i++) {
+            bool match = true;
+            for (size_t j = 0; j < pattern.size(); j++) {
+                if (!pattern[j].first && data[i + j] != pattern[j].second) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                addr_t hit_addr = base + i;
+                std::cout << "  " << hex(hit_addr) << ": ";
+                for (size_t j = 0; j < pattern.size() && j < 16; j++) {
+                    printf("%02x ", data[i + j]);
+                }
+                std::cout << std::endl;
+                found++;
+            }
+        }
+        // Back up to avoid missing matches at chunk boundaries
+        if (base + chunk_size < end) base -= pattern.size();
+    }
+    out("\nFound " + std::to_string(found) + (found >= max_results ? "+ matches (max results reached)" : " matches"));
+}
+
+void HeadlessCLI::cmdFindStr(const std::vector<std::string>& args) {
+    if (dbg_.pid() == 0) { err("Not attached"); return; }
+    if (args.size() < 3) {
+        err("usage: findstr <start_addr> <end_addr> <string>");
+        err("  Searches for ASCII string in memory");
+        return;
+    }
+    bool ok;
+    addr_t start = parseAddr(args[0], &ok);
+    if (!ok) { err("bad start address"); return; }
+    addr_t end = parseAddr(args[1], &ok);
+    if (!ok) { err("bad end address"); return; }
+
+    // Reconstruct the search string (may contain spaces)
+    std::string needle;
+    for (size_t i = 2; i < args.size(); i++) {
+        if (i > 2) needle += " ";
+        needle += args[i];
+    }
+    if (needle.empty()) { err("empty search string"); return; }
+
+    std::vector<u8> pattern(needle.begin(), needle.end());
+    size_t total_size = end - start;
+    size_t chunk_size = std::min((size_t)0x100000, total_size);
+    size_t found = 0;
+    size_t max_results = 1000;
+
+    for (addr_t base = start; base < end && found < max_results; base += chunk_size) {
+        size_t read_size = std::min(chunk_size + pattern.size(), end - base);
+        auto data = dbg_.readMemoryVec(base, read_size);
+        if (data.empty()) continue;
+
+        for (size_t i = 0; i + pattern.size() <= data.size() && found < max_results; i++) {
+            if (memcmp(data.data() + i, pattern.data(), pattern.size()) == 0) {
+                addr_t hit_addr = base + i;
+                // Read context around the hit
+                size_t ctx_start = (i >= 16) ? i - 16 : 0;
+                size_t ctx_end = std::min(i + pattern.size() + 16, data.size());
+                std::string ctx_str;
+                for (size_t j = ctx_start; j < ctx_end; j++) {
+                    ctx_str += (data[j] >= 32 && data[j] < 127) ? (char)data[j] : '.';
+                }
+                std::cout << "  " << hex(hit_addr) << ": ..." << ctx_str << "..." << std::endl;
+                found++;
+            }
+        }
+        if (base + chunk_size < end) base -= pattern.size();
+    }
+    out("\nFound " + std::to_string(found) + (found >= max_results ? "+ matches" : " matches"));
+}
+
+void HeadlessCLI::cmdFlags(const std::vector<std::string>& args) {
+    if (dbg_.pid() == 0) { err("Not attached"); return; }
+    RegisterSet r;
+    if (!dbg_.readRegisters(r)) { err("readRegisters failed"); return; }
+    u64 flags = r.rflags;
+    out("RFLAGS = " + hex(flags));
+    out("");
+    out("  CF (Carry)               = " + std::string((flags & 0x001) ? "1" : "0"));
+    out("  PF (Parity)              = " + std::string((flags & 0x004) ? "1" : "0"));
+    out("  AF (Auxiliary Carry)     = " + std::string((flags & 0x010) ? "1" : "0"));
+    out("  ZF (Zero)                = " + std::string((flags & 0x040) ? "1" : "0"));
+    out("  SF (Sign)                = " + std::string((flags & 0x080) ? "1" : "0"));
+    out("  TF (Trap)                = " + std::string((flags & 0x100) ? "1" : "0"));
+    out("  IF (Interrupt Enable)    = " + std::string((flags & 0x200) ? "1" : "0"));
+    out("  DF (Direction)           = " + std::string((flags & 0x400) ? "1" : "0"));
+    out("  OF (Overflow)            = " + std::string((flags & 0x800) ? "1" : "0"));
+    out("");
+    out("  IOPL (I/O Privilege)     = " + std::to_string((flags >> 12) & 3));
+    out("  NT (Nested Task)         = " + std::string((flags & 0x4000) ? "1" : "0"));
+    out("  RF (Resume Flag)         = " + std::string((flags & 0x10000) ? "1" : "0"));
+    out("  VM (Virtual 8086)        = " + std::string((flags & 0x20000) ? "1" : "0"));
+    out("  AC (Alignment Check)     = " + std::string((flags & 0x40000) ? "1" : "0"));
+    out("  VIF (Virtual Interrupt)  = " + std::string((flags & 0x80000) ? "1" : "0"));
+    out("  VIP (Virtual IP)         = " + std::string((flags & 0x100000) ? "1" : "0"));
+    out("  ID (CPUID available)     = " + std::string((flags & 0x200000) ? "1" : "0"));
+}
+
+void HeadlessCLI::cmdSetReg(const std::vector<std::string>& args) {
+    if (dbg_.pid() == 0) { err("Not attached"); return; }
+    if (args.size() < 3 || args[1] != "=") {
+        err("usage: setreg <regname> = <value>");
+        err("  Example: setreg rax = 0xDEADBEEF");
+        err("  Example: setreg rip = 0x401000");
+        err("  Example: setreg zf = 1   (sets zero flag)");
+        return;
+    }
+    RegisterSet r;
+    if (!dbg_.readRegisters(r)) { err("readRegisters failed"); return; }
+
+    std::string name = args[0];
+    for (auto& c : name) c = tolower(c);
+    bool ok;
+    u64 val = parseAddr(args[2], &ok);
+    if (!ok) { err("bad value"); return; }
+
+    // Individual flag setting
+    if (name == "cf") { r.rflags = (r.rflags & ~0x001ULL) | (val ? 0x001 : 0); goto write; }
+    if (name == "pf") { r.rflags = (r.rflags & ~0x004ULL) | (val ? 0x004 : 0); goto write; }
+    if (name == "af") { r.rflags = (r.rflags & ~0x010ULL) | (val ? 0x010 : 0); goto write; }
+    if (name == "zf") { r.rflags = (r.rflags & ~0x040ULL) | (val ? 0x040 : 0); goto write; }
+    if (name == "sf") { r.rflags = (r.rflags & ~0x080ULL) | (val ? 0x080 : 0); goto write; }
+    if (name == "tf") { r.rflags = (r.rflags & ~0x100ULL) | (val ? 0x100 : 0); goto write; }
+    if (name == "df") { r.rflags = (r.rflags & ~0x400ULL) | (val ? 0x400 : 0); goto write; }
+    if (name == "of") { r.rflags = (r.rflags & ~0x800ULL) | (val ? 0x800 : 0); goto write; }
+    if (name == "rflags" || name == "eflags") { r.rflags = val; goto write; }
+
+    if      (name == "rax") r.rax = val;
+    else if (name == "rbx") r.rbx = val;
+    else if (name == "rcx") r.rcx = val;
+    else if (name == "rdx") r.rdx = val;
+    else if (name == "rsi") r.rsi = val;
+    else if (name == "rdi") r.rdi = val;
+    else if (name == "rbp") r.rbp = val;
+    else if (name == "rsp") r.rsp = val;
+    else if (name == "r8")  r.r8  = val;
+    else if (name == "r9")  r.r9  = val;
+    else if (name == "r10") r.r10 = val;
+    else if (name == "r11") r.r11 = val;
+    else if (name == "r12") r.r12 = val;
+    else if (name == "r13") r.r13 = val;
+    else if (name == "r14") r.r14 = val;
+    else if (name == "r15") r.r15 = val;
+    else if (name == "rip") r.rip = val;
+    else { err("unknown register: " + name); return; }
+
+write:
+    if (dbg_.writeRegisters(r)) {
+        out(name + " = " + hex(val));
+    } else err("writeRegisters failed");
+}
+
+void HeadlessCLI::cmdMemMap(const std::vector<std::string>& args) {
+    if (dbg_.pid() == 0) { err("Not attached"); return; }
+    auto maps = dbg_.readMaps();
+    out("START              END                PERMS  OFFSET     PATH");
+    out("------------------ ------------------ -----  ---------- --------------------------------");
+    u64 total_r = 0, total_rw = 0, total_rx = 0;
+    for (auto& m : maps) {
+        std::string perms;
+        perms += m.read  ? 'r' : '-';
+        perms += m.write ? 'w' : '-';
+        perms += m.exec  ? 'x' : '-';
+        perms += m.shared? 's' : 'p';
+        u64 sz = m.end - m.start;
+        if (m.read) total_r += sz;
+        if (m.read && m.write) total_rw += sz;
+        if (m.read && m.exec) total_rx += sz;
+        std::cout << hex(m.start) << " " << hex(m.end) << " " << perms << "  "
+                  << hex(m.offset, 8) << " " << (m.path.empty() ? "[anonymous]" : m.path) << std::endl;
+    }
+    out("");
+    out("Total readable:       " + std::to_string(total_r / 1024) + " KB");
+    out("Total read-write:     " + std::to_string(total_rw / 1024) + " KB");
+    out("Total read-execute:   " + std::to_string(total_rx / 1024) + " KB");
+    out(std::to_string(maps.size()) + " memory regions");
+}
+
+void HeadlessCLI::cmdTrace(const std::vector<std::string>& args) {
+    if (dbg_.pid() == 0) { err("Not attached"); return; }
+    if (args.empty()) {
+        err("usage: trace <on|off|run <count>|save <file>>");
+        err("  trace on          Enable run trace");
+        err("  trace off         Disable run trace");
+        err("  trace run <N>     Single-step N instructions, logging each");
+        err("  trace save <file> Save trace log to file");
+        return;
+    }
+    static bool tracing = false;
+    static std::vector<std::string> trace_log;
+
+    if (args[0] == "on") {
+        tracing = true;
+        trace_log.clear();
+        out("Run trace enabled. Use 'trace run <N>' to execute.");
+    } else if (args[0] == "off") {
+        tracing = false;
+        out("Run trace disabled. " + std::to_string(trace_log.size()) + " entries logged.");
+    } else if (args[0] == "run") {
+        if (args.size() < 2) { err("usage: trace run <count>"); return; }
+        int count = atoi(args[1].c_str());
+        if (count <= 0 || count > 100000) { err("invalid count (1-100000)"); return; }
+        out("Tracing " + std::to_string(count) + " instructions...");
+        for (int i = 0; i < count; i++) {
+            RegisterSet r;
+            if (!dbg_.readRegisters(r)) { err("readRegisters failed"); break; }
+            auto bytes = dbg_.readMemoryVec(r.rip, 15);
+            auto instrs = disas_.disassemble(r.rip, bytes.data(), bytes.size(), 1);
+            if (!instrs.empty()) {
+                std::ostringstream entry;
+                entry << "#" << std::setw(6) << std::setfill('0') << i << "  "
+                      << hex(r.rip) << "  "
+                      << "rax=" << hex(r.rax) << " rbx=" << hex(r.rbx)
+                      << " rcx=" << hex(r.rcx) << " rdx=" << hex(r.rdx)
+                      << "  " << instrs[0].text;
+                trace_log.push_back(entry.str());
+            }
+            if (!dbg_.step()) { out("Target exited during trace at step " + std::to_string(i)); break; }
+        }
+        out("Trace complete: " + std::to_string(trace_log.size()) + " entries logged.");
+    } else if (args[0] == "save") {
+        if (args.size() < 2) { err("usage: trace save <filename>"); return; }
+        std::ofstream f(args[1]);
+        if (!f) { err("cannot open file: " + args[1]); return; }
+        for (auto& entry : trace_log) f << entry << "\n";
+        f.close();
+        out("Saved " + std::to_string(trace_log.size()) + " trace entries to " + args[1]);
+    } else {
+        err("unknown trace subcommand: " + args[0]);
+    }
+}
+
 void HeadlessCLI::cmdHelp(const std::vector<std::string>& args) {
     // If a specific command is requested, show detailed help for it
     if (!args.empty()) {
@@ -994,7 +1368,7 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>& args) {
         return;
     }
 
-    out("NinjaDBG v1.1.3 CLI commands:\n"
+    out("NinjaDBG v1.1.4 CLI commands:\n"
         "  attach <pid>                  Attach to a running process\n"
         "  launch <bin> [args...]        Launch a new process under the debugger\n"
         "  detach                        Detach from the target\n"
@@ -1044,6 +1418,15 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>& args) {
         "  script api                    Print Lua/Python API docs\n"
         "  script run lua <file|code>    Run a Lua script\n"
         "  script run python <file|code> Run a Python script\n"
+        "  modules | mod                 [v1.1.4] List loaded modules (like x64dbg)\n"
+        "  handles                       [v1.1.4] List open file descriptors/handles\n"
+        "  dump <addr> <size> <file>     [v1.1.4] Dump memory to file\n"
+        "  find <start> <end> <bytes...> [v1.1.4] Search memory (supports ?? wildcards)\n"
+        "  findstr <start> <end> <str>   [v1.1.4] Search memory for ASCII string\n"
+        "  flags                         [v1.1.4] Display CPU flags decoded (CF/ZF/SF/OF...)\n"
+        "  setreg <name> = <value>       [v1.1.4] Modify register or flag (e.g. setreg zf = 1)\n"
+        "  memmap                        [v1.1.4] Detailed memory map with sizes\n"
+        "  trace <on|off|run|save>       [v1.1.4] Run trace (instruction logging)\n"
         "  help [cmd]                    Show help (optionally for a specific command)\n"
         "  quit | q | exit               Exit NinjaDBG");
 }
@@ -1179,7 +1562,7 @@ void HeadlessCLI::printTargetInfo() {
 int HeadlessCLI::run(int argc, char** argv, bool skip_eula) {
     printBanner();
 
-    // v1.1.3: Parse -c BEFORE showEula() so batch mode auto-skips the EULA prompt.
+    // v1.1.4: Parse -c BEFORE showEula() so batch mode auto-skips the EULA prompt.
     // Previously, batch mode would block on stdin waiting for EULA acceptance,
     // which users perceived as "attach hangs in batch mode".
     bool batch_mode = false;

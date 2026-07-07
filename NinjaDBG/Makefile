@@ -1,7 +1,7 @@
-# NinjaDBG v1.1.3 - Build System
+# NinjaDBG v1.1.4 - Build System
 # Open Source (Apache-2.0) - by Chapzoo
 #
-# v1.1.3: GUI removed. No more Cairo/Pango/X11 dependencies.
+# v1.1.4: GUI removed. No more Cairo/Pango/X11 dependencies.
 CXX      := g++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-unused-but-set-variable \
             -Iinclude -Isrc
@@ -30,7 +30,7 @@ INSTALL_LIB := $(DESTDIR)$(PREFIX)/lib
 INSTALL_DAT := $(DESTDIR)$(PREFIX)/share/ninjadb
 
 # Debian package metadata.
-DEB_VERSION := 1.1.3
+DEB_VERSION := 1.1.4
 DEB_ARCH    := amd64
 DEB_PKG     := build/ninjadb_v$(DEB_VERSION)_$(DEB_ARCH).deb
 
@@ -41,7 +41,7 @@ all: $(BIN) target $(STEALTH_LIB)
 $(BIN): $(OBJS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(OBJS) -o $@ $(LDFLAGS)
-	@echo "[build] NinjaDBG v1.1.3 ready -> $@"
+	@echo "[build] NinjaDBG v1.1.4 ready -> $@"
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(dir $@)
@@ -81,7 +81,7 @@ install: all
 	install -m 0755 $(BIN)          $(INSTALL_BIN)/ninjadb
 	install -m 0755 $(STEALTH_LIB)  $(INSTALL_LIB)/libninjastealth.so
 	install -m 0644 $(STEALTH_SRC)  $(INSTALL_DAT)/ninjastealth.c
-	@echo "[install] NinjaDBG v1.1.3 installed into $(PREFIX)"
+	@echo "[install] NinjaDBG v1.1.4 installed into $(PREFIX)"
 	@echo "[install] Run 'sudo ldconfig' to refresh the shared library cache."
 
 # Removes everything `make install` created. Leaves ~/.config/ninjadb alone.
@@ -89,7 +89,7 @@ uninstall:
 	rm -f $(INSTALL_BIN)/ninjadb
 	rm -f $(INSTALL_LIB)/libninjastealth.so
 	rm -rf $(INSTALL_DAT)
-	@echo "[uninstall] NinjaDBG v1.1.3 removed from $(PREFIX)"
+	@echo "[uninstall] NinjaDBG v1.1.4 removed from $(PREFIX)"
 
 # ---- Tests ------------------------------------------------------------------
 
@@ -117,7 +117,7 @@ deb: all
 	@echo "Section: devel"                      >> build/deb/DEBIAN/control
 	@echo "Priority: optional"                  >> build/deb/DEBIAN/control
 	@echo "Depends: libc6 (>= 2.17), libstdc++6" >> build/deb/DEBIAN/control
-	@echo "Description: NinjaDBG v1.1.3 - Stealth Debugger for Linux x86-64" >> build/deb/DEBIAN/control
+	@echo "Description: NinjaDBG v1.1.4 - Stealth Debugger for Linux x86-64" >> build/deb/DEBIAN/control
 	@echo " Open Source (Apache-2.0) - by Chapzoo" >> build/deb/DEBIAN/control
 	@echo " CLI-only debugger with ptrace-based core, hardware breakpoints," >> build/deb/DEBIAN/control
 	@echo " decompilation (RetDec/angr), pretty printers, scripting,"       >> build/deb/DEBIAN/control
