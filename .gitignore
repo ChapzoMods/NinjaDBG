@@ -1,2 +1,30 @@
-skills/
-node_modules/
+# Build artifacts
+build/
+*.o
+*.ko
+*.so
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+*.bak
+
+# Secrets - never commit tokens or .env
+.env
+*.token
+*.key
+
+# NEVER commit these directories
+download/
+tool-results/
+upload/
+NinjaDBG/
