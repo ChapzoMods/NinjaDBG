@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.4 - DebuggerCore implementation
+// NinjaDBG v1.2.0 - DebuggerCore implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "DebuggerCore.h"
 #include "AntiDetect.h"
@@ -47,7 +47,7 @@ bool DebuggerCore::attach(pid_t pid) {
     pid_ = pid;
     state_ = RunState::Stopped;
 
-    // v1.1.4: Set the same ptrace options as attachByLaunch, so that:
+    // v1.2.0: Set the same ptrace options as attachByLaunch, so that:
     //   - Child threads/processes are traced (TRACECLONE/FORK/EXEC)
     //   - The tracee is killed if NinjaDBG dies (EXITKILL)
     long opts = PTRACE_O_TRACECLONE | PTRACE_O_TRACEFORK |
@@ -138,7 +138,7 @@ bool DebuggerCore::step() {
 bool DebuggerCore::cont() {
     if (pid_ == 0) return false;
 
-    // v1.1.4: If RIP is currently at a breakpoint address, we need to
+    // v1.2.0: If RIP is currently at a breakpoint address, we need to
     // single-step over it FIRST (with the bp uninstalled) before re-installing
     // all breakpoints and doing PTRACE_CONT. Otherwise the CPU immediately
     // re-traps on the 0xCC we just re-installed.
@@ -207,14 +207,14 @@ bool DebuggerCore::waitForStop(int& signal_out, bool& exited_out, int& exit_code
         exited_out = true;
         exit_code_out = WEXITSTATUS(status);
         state_ = RunState::Exited;
-        pid_ = 0;  // v1.1.4: clear pid so subsequent commands don't ptrace a dead process
+        pid_ = 0;  // v1.2.0: clear pid so subsequent commands don't ptrace a dead process
         return true;
     }
     if (WIFSIGNALED(status)) {
         exited_out = true;
         exit_code_out = -WTERMSIG(status);
         state_ = RunState::Exited;
-        pid_ = 0;  // v1.1.4: clear pid so subsequent commands don't ptrace a dead process
+        pid_ = 0;  // v1.2.0: clear pid so subsequent commands don't ptrace a dead process
         return true;
     }
     if (WIFSTOPPED(status)) {
@@ -232,7 +232,7 @@ bool DebuggerCore::waitForStop(int& signal_out, bool& exited_out, int& exit_code
                     bp->hit_count++;
                     uninstallBp(*bp);
 
-                    // v1.1.4: Check conditional breakpoint
+                    // v1.2.0: Check conditional breakpoint
                     if (!bp->condition.empty() && !checkBreakpointCondition(bp->id)) {
                         // Condition is false — single-step over the bp instruction
                         // (bp is currently uninstalled), then re-install and continue.
@@ -262,7 +262,7 @@ bool DebuggerCore::waitForStop(int& signal_out, bool& exited_out, int& exit_code
                         return waitForStop(signal_out, exited_out, exit_code_out);
                     }
 
-                    // v1.1.4: Auto-remove temporary breakpoints
+                    // v1.2.0: Auto-remove temporary breakpoints
                     if (bp->temporary) {
                         bps_.erase(bp->id);
                     }
@@ -456,7 +456,7 @@ std::vector<MemoryRegion> DebuggerCore::readMaps() {
         if (n >= 5) r.path = path;
         out.push_back(r);
     }
-    maps_cache_ = out;  // v1.1.4: cache for backtrace symbol resolution
+    maps_cache_ = out;  // v1.2.0: cache for backtrace symbol resolution
     return out;
 }
 
@@ -610,7 +610,7 @@ bool DebuggerCore::pokeByte(addr_t addr, u8 v) {
     return ptrace(PTRACE_POKEDATA, pid_, (void*)addr, (void*)word) != -1;
 }
 
-// ===== v1.1.4 advanced features =====
+// ===== v1.2.0 advanced features =====
 
 int DebuggerCore::addConditionalBreakpoint(addr_t addr, const std::string& condition,
                                             const std::string& label) {
@@ -728,7 +728,7 @@ bool DebuggerCore::stepOut() {
     if (!readMemory(r.rsp, &ret_addr, 8)) return false;
     int id = addTempBreakpoint(ret_addr, "_step_out_ret");
     if (id < 0) return false;
-    // v1.1.4: check cont() return value to avoid deadlock
+    // v1.2.0: check cont() return value to avoid deadlock
     if (!cont()) { removeBreakpoint(id); return false; }
     int sig; bool ex; int code;
     waitForStop(sig, ex, code);
@@ -755,7 +755,7 @@ bool DebuggerCore::stepOver() {
     }
     int id = addTempBreakpoint(r.rip + call_len, "_step_over");
     if (id < 0) return step();
-    // v1.1.4: check cont() return value to avoid deadlock
+    // v1.2.0: check cont() return value to avoid deadlock
     if (!cont()) { removeBreakpoint(id); return false; }
     int sig; bool ex; int code;
     waitForStop(sig, ex, code);

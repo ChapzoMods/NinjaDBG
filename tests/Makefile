@@ -1,4 +1,4 @@
-# NinjaDBG v1.1.4 - Tests Makefile
+# NinjaDBG v1.2.0 - Tests Makefile
 # Open Source (Apache-2.0) - by Chapzoo
 #
 # Builds and runs the NinjaDBG test suite:

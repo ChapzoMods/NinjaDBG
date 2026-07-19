@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.4 - InteractiveMemoryEditor implementation
+// NinjaDBG v1.2.0 - InteractiveMemoryEditor implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "InteractiveMemoryEditor.h"
 #include <iostream>

@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.4 - Platform Debug Adapters
+// NinjaDBG v1.2.0 - Platform Debug Adapters
 // Open Source (Apache-2.0) - by Chapzoo
 //
 // NinjaDBG's DebuggerCore is Linux-native (ptrace). To debug Windows and
