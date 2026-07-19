@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.4 - Disassembler implementation
+// NinjaDBG v1.2.0 - Disassembler implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "Disassembler.h"
 #include <cstring>

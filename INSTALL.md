@@ -1,7 +1,7 @@
 # Installing NinjaDBG
 
-NinjaDBG v1.1.4 is a CLI-only stealth debugger for Linux x86-64. The GUI
-was removed in v1.1.4, so there are no Cairo, Pango, or X11 dependencies.
+NinjaDBG v1.2.0 is a CLI-only stealth debugger for Linux x86-64. The GUI
+was removed in v1.2.0, so there are no Cairo, Pango, or X11 dependencies.
 
 Licensed under Apache-2.0.
 
@@ -111,12 +111,12 @@ The `deb` Makefile target builds a `.deb` package using `dpkg-deb`.
 make deb
 ```
 
-This produces `build/ninjadb_v1.1.4_amd64.deb`. Install it with:
+This produces `build/ninjadb_v1.2.0_amd64.deb`. Install it with:
 
 ```bash
-sudo apt-get install ./build/ninjadb_v1.1.4_amd64.deb
+sudo apt-get install ./build/ninjadb_v1.2.0_amd64.deb
 # or, equivalently:
-sudo dpkg -i build/ninjadb_v1.1.4_amd64.deb
+sudo dpkg -i build/ninjadb_v1.2.0_amd64.deb
 ```
 
 Uninstall the `.deb` with:

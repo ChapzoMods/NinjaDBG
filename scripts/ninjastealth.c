@@ -1,5 +1,5 @@
 /*
- * libninjastealth.so - NinjaDBG v1.1.4 Preload Stealth Payload
+ * libninjastealth.so - NinjaDBG v1.2.0 Preload Stealth Payload
  * Open Source (Apache-2.0) - by Chapzoo
  *
  * This shared library is injected into the target process via LD_PRELOAD

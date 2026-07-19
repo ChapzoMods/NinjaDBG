@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.4 - HeadlessCLI implementation
+// NinjaDBG v1.2.0 - HeadlessCLI implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "HeadlessCLI.h"
 #include "WelcomeScreen.h"
@@ -39,9 +39,9 @@ void HeadlessCLI::printBanner() {
         " | |\\  | | |_| | | | (_| | | | |_| |\\___ \\ \n"
         " |_| \\_|_|\\__|_| |_|\\__,_|_|  \\___/|____) |\n"
         "\n"
-        "  v1.1.4 — Stealth Debugger  (Open Source (Apache-2.0) - by Chapzoo)\n"
+        "  v1.2.0 — Stealth Debugger  (Open Source (Apache-2.0) - by Chapzoo)\n"
         "  Headless CLI mode. Type 'help' for command list, 'quit' to exit.\n"
-        "  New in v1.1.4: decomp (native C decompilation via RetDec/angr)\n"
+        "  New in v1.2.0: decomp (native C decompilation via RetDec/angr)\n"
         "\n";
 }
 
@@ -162,7 +162,7 @@ void HeadlessCLI::execute(const std::string& line) {
         if (ms <= 0) { err("sleep: invalid duration"); return; }
         usleep(ms * 1000);
     }
-    // v1.1.4: x64dbg-like features
+    // v1.2.0: x64dbg-like features
     else if (cmd == "modules" || cmd == "mod") { cmdModules(args); }
     else if (cmd == "handles") { cmdHandles(args); }
     else if (cmd == "dump") { cmdDump(args); }
@@ -817,7 +817,7 @@ void HeadlessCLI::cmdTarget(const std::vector<std::string>& args) {
     } else err("load failed: " + patcher_.lastError());
 }
 
-// ===== v1.1.4: x64dbg-like features =====
+// ===== v1.2.0: x64dbg-like features =====
 
 void HeadlessCLI::cmdModules(const std::vector<std::string>& args) {
     if (dbg_.pid() == 0) { err("Not attached"); return; }
@@ -1368,7 +1368,7 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>& args) {
         return;
     }
 
-    out("NinjaDBG v1.1.4 CLI commands:\n"
+    out("NinjaDBG v1.2.0 CLI commands:\n"
         "  attach <pid>                  Attach to a running process\n"
         "  launch <bin> [args...]        Launch a new process under the debugger\n"
         "  detach                        Detach from the target\n"
@@ -1418,15 +1418,15 @@ void HeadlessCLI::cmdHelp(const std::vector<std::string>& args) {
         "  script api                    Print Lua/Python API docs\n"
         "  script run lua <file|code>    Run a Lua script\n"
         "  script run python <file|code> Run a Python script\n"
-        "  modules | mod                 [v1.1.4] List loaded modules (like x64dbg)\n"
-        "  handles                       [v1.1.4] List open file descriptors/handles\n"
-        "  dump <addr> <size> <file>     [v1.1.4] Dump memory to file\n"
-        "  find <start> <end> <bytes...> [v1.1.4] Search memory (supports ?? wildcards)\n"
-        "  findstr <start> <end> <str>   [v1.1.4] Search memory for ASCII string\n"
-        "  flags                         [v1.1.4] Display CPU flags decoded (CF/ZF/SF/OF...)\n"
-        "  setreg <name> = <value>       [v1.1.4] Modify register or flag (e.g. setreg zf = 1)\n"
-        "  memmap                        [v1.1.4] Detailed memory map with sizes\n"
-        "  trace <on|off|run|save>       [v1.1.4] Run trace (instruction logging)\n"
+        "  modules | mod                 [v1.2.0] List loaded modules (like x64dbg)\n"
+        "  handles                       [v1.2.0] List open file descriptors/handles\n"
+        "  dump <addr> <size> <file>     [v1.2.0] Dump memory to file\n"
+        "  find <start> <end> <bytes...> [v1.2.0] Search memory (supports ?? wildcards)\n"
+        "  findstr <start> <end> <str>   [v1.2.0] Search memory for ASCII string\n"
+        "  flags                         [v1.2.0] Display CPU flags decoded (CF/ZF/SF/OF...)\n"
+        "  setreg <name> = <value>       [v1.2.0] Modify register or flag (e.g. setreg zf = 1)\n"
+        "  memmap                        [v1.2.0] Detailed memory map with sizes\n"
+        "  trace <on|off|run|save>       [v1.2.0] Run trace (instruction logging)\n"
         "  help [cmd]                    Show help (optionally for a specific command)\n"
         "  quit | q | exit               Exit NinjaDBG");
 }
@@ -1562,7 +1562,7 @@ void HeadlessCLI::printTargetInfo() {
 int HeadlessCLI::run(int argc, char** argv, bool skip_eula) {
     printBanner();
 
-    // v1.1.4: Parse -c BEFORE showEula() so batch mode auto-skips the EULA prompt.
+    // v1.2.0: Parse -c BEFORE showEula() so batch mode auto-skips the EULA prompt.
     // Previously, batch mode would block on stdin waiting for EULA acceptance,
     // which users perceived as "attach hangs in batch mode".
     bool batch_mode = false;

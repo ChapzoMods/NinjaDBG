@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.4 - AntiDetect implementation
+// NinjaDBG v1.2.0 - AntiDetect implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "AntiDetect.h"
 #include <fstream>
@@ -104,7 +104,7 @@ std::string AntiDetect::report() const {
 std::string AntiDetect::buildPreloadPayload() {
     if (!preload_path_.empty()) return preload_path_;
 
-    // v1.1.4: The stealth payload source is maintained as a hand-written file
+    // v1.2.0: The stealth payload source is maintained as a hand-written file
     // at scripts/ninjastealth.c. We do NOT regenerate it (which would destroy
     // the carefully maintained hooks). We only compile it.
     //

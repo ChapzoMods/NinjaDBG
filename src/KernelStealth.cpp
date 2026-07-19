@@ -1,4 +1,4 @@
-// NinjaDBG v1.1.4 - KernelStealth implementation
+// NinjaDBG v1.2.0 - KernelStealth implementation
 // Open Source (Apache-2.0) - by Chapzoo
 #include "KernelStealth.h"
 #include <fstream>
@@ -147,7 +147,7 @@ std::string KernelStealth::buildKernelModule() {
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Chapzoo");
 MODULE_DESCRIPTION("NinjaDBG stealth kernel module");
-MODULE_VERSION("1.1.4");
+MODULE_VERSION("1.2.0");
 
 static int ninja_pid = 0;
 module_param(ninja_pid, int, 0644);
